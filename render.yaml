@@ -1,0 +1,31 @@
+# Cấu hình triển khai Render (Infrastructure as Code)
+# Xem: https://render.com/docs/blueprint-spec
+services:
+  - type: web
+    name: nihongo-kizuna-api
+    runtime: node
+    plan: free
+    region: singapore
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # Các biến bên dưới phải điền thủ công trong Render Dashboard
+      - key: MONGODB_URI
+        sync: false
+      - key: JWT_ACCESS_SECRET
+        generateValue: true
+      - key: JWT_REFRESH_SECRET
+        generateValue: true
+      - key: CORS_ORIGINS
+        sync: false
+      - key: FRONTEND_URL
+        sync: false
+      - key: MAIL_PROVIDER
+        value: console
+      - key: RESEND_API_KEY
+        sync: false
+      - key: MAIL_FROM
+        sync: false
