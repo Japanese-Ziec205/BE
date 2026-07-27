@@ -21,6 +21,9 @@ function clientIpKey(req: Request): string {
  */
 function build(options: Partial<Options>) {
   return rateLimit({
+    // Bộ test tạo hàng chục tài khoản từ cùng một IP nên sẽ chạm trần ngay và
+    // làm nhiễu kết quả. Chỉ bỏ qua ở NODE_ENV=test, production vẫn áp dụng.
+    skip: () => process.env.NODE_ENV === 'test',
     standardHeaders: 'draft-7',
     legacyHeaders: false,
     handler: (_req, res, _next, opts) => {

@@ -1,0 +1,350 @@
+import {
+  setupTestEnv,
+  teardownTestEnv,
+  createUser,
+  createClient,
+  suite,
+  test,
+  expect,
+  report,
+} from './helpers';
+
+async function main() {
+  const { baseUrl } = await setupTestEnv(5555);
+
+  const { seedAllLanguage } = await import('../src/seeds/language.seed');
+  await seedAllLanguage();
+
+  const admin = await createUser(baseUrl, 'admin@test.vn', 'admin');
+  const lecturer = await createUser(baseUrl, 'lecturer@test.vn', 'lecturer');
+  const contributor = await createUser(baseUrl, 'ctv@test.vn', 'contributor');
+  const student = await createUser(baseUrl, 'student@test.vn', 'student');
+  const anon = createClient(baseUrl);
+
+  // =======================================================================
+  suite('Xác thực & định danh');
+  // =======================================================================
+
+  await test('Đăng ký bằng số điện thoại được chuẩn hoá về E.164', async () => {
+    const c = createClient(baseUrl);
+    const r = await c.post('/auth/register', {
+      identifier: '0912 345 678',
+      password: 'MatKhauAnToan2026',
+      displayName: 'Người dùng SĐT',
+      acceptTerms: true,
+    });
+    expect(r.status).toBe(201);
+    expect(r.data.identifierType).toBe('phone');
+
+    // Cùng số nhưng viết dạng +84 phải bị coi là trùng
+    const dup = await c.post('/auth/register', {
+      identifier: '+84912345678',
+      password: 'MatKhauAnToan2026',
+      displayName: 'Trùng',
+      acceptTerms: true,
+    });
+    expect(dup.status).toBe(409);
+    expect(dup.error.code).toBe('AUTH_IDENTIFIER_TAKEN');
+  });
+
+  await test('Mật khẩu quá dễ đoán bị từ chối', async () => {
+    const c = createClient(baseUrl);
+    const r = await c.post('/auth/register', {
+      identifier: 'weak@test.vn',
+      password: 'password',
+      displayName: 'Yếu',
+      acceptTerms: true,
+    });
+    expect(r.status).toBe(422);
+  });
+
+  await test('Đăng nhập sai và không tồn tại trả cùng một mã lỗi', async () => {
+    const c = createClient(baseUrl);
+    const wrongPw = await c.post('/auth/login', {
+      identifier: 'student@test.vn',
+      password: 'SaiMatKhauHoanToan',
+    });
+    const noUser = await c.post('/auth/login', {
+      identifier: 'khongtontai@test.vn',
+      password: 'SaiMatKhauHoanToan',
+    });
+    expect(wrongPw.error.code).toBe('AUTH_INVALID_CREDENTIALS');
+    expect(noUser.error.code).toBe('AUTH_INVALID_CREDENTIALS');
+  });
+
+  // =======================================================================
+  suite('Phân quyền RBAC');
+  // =======================================================================
+
+  await test('Học viên không vào được khu quản trị', async () => {
+    const r = await student.client.get('/cms/vocabulary');
+    expect(r.status).toBe(403);
+    expect(r.error.code).toBe('AUTH_FORBIDDEN');
+  });
+
+  await test('Cộng tác viên xem được kho nội dung', async () => {
+    const r = await contributor.client.get('/cms/vocabulary');
+    expect(r.status).toBe(200);
+  });
+
+  await test('Cộng tác viên KHÔNG được xuất bản', async () => {
+    const created = await contributor.client.post('/cms/vocabulary', {
+      word: '試験',
+      reading: 'しけん',
+      meaningsVi: ['kỳ thi'],
+      jlptLevel: 'N4',
+    });
+    expect(created.status).toBe(201);
+    const pub = await contributor.client.post(`/cms/vocabulary/${created.data._id}/publish`);
+    expect(pub.status).toBe(403);
+  });
+
+  await test('Không đăng nhập thì bị chặn', async () => {
+    const r = await anon.get('/cms/vocabulary');
+    expect(r.status).toBe(401);
+  });
+
+  // =======================================================================
+  suite('Quy trình duyệt nội dung');
+  // =======================================================================
+
+  let vocabId = '';
+
+  await test('CTV tạo nội dung ở trạng thái nháp', async () => {
+    const r = await contributor.client.post('/cms/vocabulary', {
+      word: '名前',
+      reading: 'なまえ',
+      meaningsVi: ['tên gọi'],
+      partOfSpeech: ['noun'],
+      jlptLevel: 'N5',
+      topics: ['trường học'],
+    });
+    expect(r.status).toBe(201);
+    expect(r.data.status).toBe('draft');
+    vocabId = r.data._id;
+  });
+
+  await test('Gửi duyệt chuyển sang pending_review', async () => {
+    const r = await contributor.client.post(`/cms/vocabulary/${vocabId}/submit`);
+    expect(r.status).toBe(200);
+    expect(r.data.status).toBe('pending_review');
+  });
+
+  await test('Nội dung chưa duyệt thì không xuất bản được', async () => {
+    const r = await admin.client.post(`/cms/vocabulary/${vocabId}/publish`);
+    expect(r.status).toBe(409);
+    expect(r.error.code).toBe('CONTENT_NOT_APPROVED');
+  });
+
+  let taskId = '';
+
+  await test('Nội dung xuất hiện trong hàng chờ duyệt của giảng viên', async () => {
+    const r = await lecturer.client.get('/cms/review/queue');
+    expect(r.status).toBe(200);
+    expect(r.data.length).toBeGreaterThan(0);
+    const task = r.data.find((t: { targetId: string }) => t.targetId === vocabId);
+    expect(task).toBeTruthy();
+    taskId = task._id;
+  });
+
+  await test('KHÔNG được tự duyệt nội dung của chính mình', async () => {
+    // CTV cần quyền content.review để chạm tới được logic kiểm tra tự duyệt
+    const { User } = await import('../src/models/User');
+    await User.updateOne(
+      { _id: contributor.userId },
+      { $set: { permissions: ['content.review'] } },
+    );
+    const relogin = createClient(baseUrl);
+    const login = await relogin.post('/auth/login', {
+      identifier: 'ctv@test.vn',
+      password: 'MatKhauAnToan2026',
+    });
+    relogin.setToken(login.data.accessToken);
+
+    const r = await relogin.post(`/cms/review/${taskId}`, { decision: 'approve' });
+    expect(r.status).toBe(403);
+    expect(r.error.code).toBe('CONTENT_SELF_REVIEW');
+
+    await User.updateOne({ _id: contributor.userId }, { $set: { permissions: [] } });
+  });
+
+  await test('Giảng viên duyệt được nội dung của người khác', async () => {
+    const r = await lecturer.client.post(`/cms/review/${taskId}`, {
+      decision: 'approve',
+      note: 'Nội dung chính xác, đồng ý xuất bản.',
+    });
+    expect(r.status).toBe(200);
+    expect(r.data.content.status).toBe('approved');
+  });
+
+  await test('Admin xuất bản sau khi đã được thẩm định', async () => {
+    const r = await admin.client.post(`/cms/vocabulary/${vocabId}/publish`);
+    expect(r.status).toBe(200);
+    expect(r.data.status).toBe('published');
+  });
+
+  await test('Nội dung đã xuất bản thì CTV không sửa trực tiếp được', async () => {
+    const r = await contributor.client.patch(`/cms/vocabulary/${vocabId}`, {
+      meaningsVi: ['học tập', 'nỗ lực'],
+    });
+    expect(r.status).toBe(403);
+    expect(r.error.code).toBe('CONTENT_IMMUTABLE_PUBLISHED');
+  });
+
+  await test('Lịch sử phiên bản ghi lại đầy đủ các bước', async () => {
+    const r = await admin.client.get(`/cms/vocabulary/${vocabId}/revisions`);
+    expect(r.status).toBe(200);
+    const actions = r.data.map((rev: { action: string }) => rev.action);
+    expect(actions).toContain('create');
+    expect(actions).toContain('submit');
+    expect(actions).toContain('approve');
+    expect(actions).toContain('publish');
+  });
+
+  // =======================================================================
+  suite('Kiểm soát cấp độ Kanji (BR-10)');
+  // =======================================================================
+
+  await test('Kanji vượt cấp mà thiếu Furigana thì bị chặn khi gửi duyệt', async () => {
+    // 議 không nằm trong N5 nên từ này vượt cấp
+    const created = await contributor.client.post('/cms/vocabulary', {
+      word: '会議',
+      reading: 'かいぎ',
+      meaningsVi: ['cuộc họp'],
+      jlptLevel: 'N5',
+      furiganaSegments: [{ text: '会議', reading: null }],
+    });
+    expect(created.status).toBe(201);
+
+    const submit = await contributor.client.post(`/cms/vocabulary/${created.data._id}/submit`);
+    expect(submit.status).toBe(422);
+    expect(submit.error.code).toBe('CONTENT_KANJI_LEVEL_VIOLATION');
+  });
+
+  await test('Có Furigana đầy đủ thì Kanji vượt cấp được chấp nhận', async () => {
+    const created = await contributor.client.post('/cms/vocabulary', {
+      word: '議論',
+      reading: 'ぎろん',
+      meaningsVi: ['tranh luận'],
+      jlptLevel: 'N5',
+      furiganaSegments: [{ text: '議論', reading: 'ぎろん' }],
+    });
+    const submit = await contributor.client.post(`/cms/vocabulary/${created.data._id}/submit`);
+    expect(submit.status).toBe(200);
+  });
+
+  await test('maxKanjiLevel được tính tự động khi lưu', async () => {
+    const r = await contributor.client.post('/cms/vocabulary', {
+      word: '山道',
+      reading: 'やまみち',
+      meaningsVi: ['đường núi'],
+      jlptLevel: 'N5',
+    });
+    expect(r.status).toBe(201);
+    expect(r.data.maxKanjiLevel).toBe('N5');
+  });
+
+  // =======================================================================
+  suite('Nhập hàng loạt từ CSV');
+  // =======================================================================
+
+  await test('Tải được file mẫu CSV', async () => {
+    const res = await fetch(`${baseUrl}/cms/import/vocabulary/template`, {
+      headers: { Authorization: `Bearer ${contributor.client.getToken()}` },
+    });
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(text).toContain('word');
+    expect(text).toContain('reading');
+  });
+
+  await test('Chế độ thử nghiệm phát hiện lỗi mà không ghi vào DB', async () => {
+    const csv = [
+      'word,reading,meaningsVi,partOfSpeech,jlptLevel,topics',
+      '新聞,しんぶん,báo;tờ báo,noun,N5,đời sống',
+      ',よみ,thiếu từ,noun,N5,', // thiếu cột bắt buộc
+      '雑誌,ざっし,tạp chí,noun,N9,', // cấp độ sai
+    ].join('\n');
+
+    const r = await contributor.client.post('/cms/import/vocabulary', { csv, dryRun: true });
+    expect(r.status).toBe(200);
+    expect(r.data.total).toBe(3);
+    expect(r.data.invalid).toBe(2);
+    expect(r.data.inserted).toBe(0);
+  });
+
+  await test('File hợp lệ hoàn toàn thì được nhập vào', async () => {
+    const csv = [
+      'word,reading,meaningsVi,partOfSpeech,jlptLevel,topics',
+      '新聞,しんぶん,báo;tờ báo,noun,N5,đời sống',
+      '雑誌,ざっし,tạp chí,noun,N5,đời sống',
+    ].join('\n');
+
+    const r = await contributor.client.post('/cms/import/vocabulary', { csv });
+    expect(r.status).toBe(200);
+    expect(r.data.inserted).toBe(2);
+  });
+
+  await test('Phát hiện trùng lặp với dữ liệu đã có', async () => {
+    const csv = [
+      'word,reading,meaningsVi,partOfSpeech,jlptLevel,topics',
+      '新聞,しんぶん,báo,noun,N5,đời sống',
+    ].join('\n');
+
+    const r = await contributor.client.post('/cms/import/vocabulary', { csv, dryRun: true });
+    expect(r.data.invalid).toBe(1);
+    expect(r.data.rows[0].errors[0]).toContain('Đã tồn tại');
+  });
+
+  // =======================================================================
+  suite('API công khai (SEO)');
+  // =======================================================================
+
+  await test('Bảng Hiragana trả về đủ 108 ký tự, không cần đăng nhập', async () => {
+    const r = await anon.get('/public/kana/chart?script=hiragana');
+    expect(r.status).toBe(200);
+    expect(r.data.total).toBe(108);
+    expect(r.data.groups.gojuon).toHaveLength(46);
+    expect(r.data.groups.yoon).toHaveLength(36);
+  });
+
+  await test('Bảng Katakana trả về đủ 122 ký tự', async () => {
+    const r = await anon.get('/public/kana/chart?script=katakana');
+    expect(r.data.total).toBe(122);
+    expect(r.data.groups.special).toHaveLength(15);
+  });
+
+  await test('Tra cứu Kanji trả về chiết tự và âm Hán-Việt', async () => {
+    const r = await anon.get(`/public/kanji/${encodeURIComponent('休')}`);
+    expect(r.status).toBe(200);
+    expect(r.data.sinoVietnamese).toBe('HƯU');
+    expect(r.data.componentCharacters).toContain('木');
+    expect(r.data.components.length).toBeGreaterThan(0);
+  });
+
+  await test('Danh sách 214 bộ thủ', async () => {
+    const r = await anon.get('/public/radicals');
+    expect(r.data.total).toBe(214);
+  });
+
+  await test('Kotowaza trả đúng theo ngữ cảnh cảm xúc', async () => {
+    const r = await anon.get('/public/kotowaza/daily?context=after_fail');
+    expect(r.status).toBe(200);
+    expect(r.data.displayContexts).toContain('after_fail');
+  });
+
+  await test('Ngữ pháp N5 đã xuất bản', async () => {
+    const r = await anon.get('/public/grammar?level=N5');
+    expect(r.data.total).toBeGreaterThan(0);
+  });
+
+  await teardownTestEnv();
+  return report();
+}
+
+main()
+  .then((failed) => process.exit(failed > 0 ? 1 : 0))
+  .catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
