@@ -13,7 +13,8 @@
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit",
     "seed:admin": "tsx src/seeds/admin.seed.ts",
-    "lint": "eslint src --ext .ts"
+    "lint": "eslint src --ext .ts",
+    "seed": "tsx src/seeds/index.ts"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
