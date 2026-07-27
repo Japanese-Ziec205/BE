@@ -107,6 +107,64 @@ Frontend nên bắt lỗi theo `error.code` chứ không so khớp `message` —
 | GET | `/api/v1/auth/sessions` | Danh sách thiết bị đang đăng nhập | ✅ |
 | DELETE | `/api/v1/auth/sessions/:id` | Đăng xuất một thiết bị từ xa | ✅ |
 | POST | `/api/v1/auth/identifiers` | Thêm email/SĐT phụ | ✅ |
+
+**Học tập & Ôn tập**
+
+| Method | Path | Mô tả |
+|---|---|---|
+| GET | `/api/v1/lessons` | Danh sách bài học kèm trạng thái mở khoá |
+| GET | `/api/v1/lessons/:slug` | Nội dung bài học |
+| POST | `/api/v1/lessons/:id/complete` | Hoàn thành bài, nạp thẻ SRS, cộng XP |
+| GET | `/api/v1/srs/queue` | Hàng chờ ôn tập hôm nay |
+| POST | `/api/v1/srs/review` | Gửi kết quả ôn một thẻ |
+| GET | `/api/v1/srs/stats` | Thống kê và dự báo 7 ngày tới |
+| GET | `/api/v1/srs/leeches` | Danh sách chữ khó nhằn |
+| POST | `/api/v1/study/sessions/start` | Mở phiên học |
+| POST | `/api/v1/study/heartbeat` | Nhịp báo mỗi 60 giây |
+| GET | `/api/v1/study/today` | Giờ học hôm nay so với mục tiêu |
+| GET | `/api/v1/study/history` | Lịch sử theo ngày |
+
+**Thi thử JLPT**
+
+| Method | Path | Mô tả |
+|---|---|---|
+| POST | `/api/v1/exams/generate` | Sinh đề mới từ ma trận |
+| GET | `/api/v1/exams/attempts/:id` | Nội dung bài thi (đã ẩn đáp án) |
+| POST | `/api/v1/exams/attempts/:id/sections/:code/start` | Bắt đầu một phần thi |
+| PATCH | `/api/v1/exams/attempts/:id/answers` | Lưu đáp án theo lô |
+| POST | `/api/v1/exams/attempts/:id/submit` | Nộp bài và chấm |
+| GET | `/api/v1/exams/attempts/:id/result` | Kết quả + radar + khuyến nghị |
+| GET | `/api/v1/exams/attempts/:id/review` | Xem lại từng câu kèm giải thích |
+| GET | `/api/v1/exams/pool-health` | Kiểm tra kho câu hỏi đủ để sinh đề chưa |
+
+**Quản trị nội dung (CMS)**
+
+| Method | Path | Quyền |
+|---|---|---|
+| GET/POST/PATCH | `/api/v1/cms/:type` | `content.*` |
+| POST | `/api/v1/cms/:type/:id/submit` | Gửi duyệt |
+| GET | `/api/v1/cms/review/queue` | `content.review` |
+| POST | `/api/v1/cms/review/:taskId` | Duyệt / yêu cầu sửa / từ chối |
+| POST | `/api/v1/cms/:type/:id/publish` | `content.publish` |
+| POST | `/api/v1/cms/import/:type` | Nhập hàng loạt từ CSV |
+
+**Công khai (không cần đăng nhập, phục vụ SEO)**
+
+| Method | Path |
+|---|---|
+| GET | `/api/v1/public/kana/chart?script=hiragana` |
+| GET | `/api/v1/public/kanji/:character` |
+| GET | `/api/v1/public/radicals` |
+| GET | `/api/v1/public/grammar?level=N5` |
+| GET | `/api/v1/public/kotowaza/daily?context=after_fail` |
+
+**Gamification**
+
+| Method | Path |
+|---|---|
+| GET | `/api/v1/gamification/profile` |
+| GET | `/api/v1/gamification/achievements` |
+| GET | `/api/v1/gamification/notifications` |
 | GET | `/api/v1/users/me` | Hồ sơ đầy đủ | ✅ |
 | PATCH | `/api/v1/users/me` | Cập nhật hồ sơ | ✅ |
 | PATCH | `/api/v1/users/me/settings` | Cập nhật tuỳ chỉnh giao diện | ✅ |
@@ -162,6 +220,26 @@ Render gói miễn phí không cấp IP tĩnh cho kết nối đi ra. Vào Atlas
 Render cho instance ngủ sau 15 phút không có request, lần đánh thức mất 30–60 giây. Hãy đặt một cron job (cron-job.org hoặc GitHub Actions, đều miễn phí) gọi `/health` mỗi 10 phút.
 
 Phiên bản Node được ghim ở file `.node-version` (Node 24 LTS) để môi trường máy bạn và Render giống nhau.
+
+## Trạng thái
+
+| Giai đoạn | Nội dung | Tình trạng |
+|---|---|---|
+| 0-1 | Nền tảng, xác thực, phân quyền 4 vai trò | ✅ |
+| 2 | Kho ngôn ngữ, CMS, workflow duyệt, nhập CSV, API public | ✅ |
+| 3 | Engine SRS SM-2, ghi nhận giờ học, bài học | ✅ |
+| 4 | Ngân hàng câu hỏi 11 định dạng, engine chấm | ✅ |
+| 5 | Ma trận đề N5, engine sinh đề, chấm điểm liệt kép | ✅ |
+| 6 | XP, chuỗi ngày có bùa cứu, 24 huy hiệu | ✅ |
+| — | **Test: 101/101 ca đạt** | ✅ |
+
+**Chưa có, cần bổ sung:**
+- Dữ liệu nét bút SVG (nhập từ KanjiVG, giấy phép CC BY-SA). Chưa có thì tính
+  năng chấm chữ viết tay chưa chạy được. Cố tình không bịa đường SVG vì sẽ cho
+  kết quả chấm sai hoàn toàn.
+- File audio cho phần Nghe hiểu
+- Kho câu hỏi thật (mục tiêu 1.000 câu N5) — đây là việc của đội cộng tác viên
+  qua CMS, không phải việc lập trình
 
 ## Giấy phép
 
