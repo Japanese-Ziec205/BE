@@ -6,7 +6,11 @@ services:
     runtime: node
     plan: free
     region: singapore
-    buildCommand: npm install && npm run build
+    # PHẢI có --include=dev: Render đặt NODE_ENV=production, mà khi thấy biến đó
+    # npm sẽ bỏ qua devDependencies — nơi `typescript` nằm. Thiếu cờ này thì
+    # `tsc` không được cài, build thất bại lặng lẽ và `node dist/server.js`
+    # báo "Cannot find module".
+    buildCommand: npm ci --include=dev && npm run build
     startCommand: npm start
     healthCheckPath: /health
     envVars:

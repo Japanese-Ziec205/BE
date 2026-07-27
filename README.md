@@ -130,15 +130,38 @@ Frontend nên bắt lỗi theo `error.code` chứ không so khớp `message` —
 
 ## Triển khai lên Render
 
-1. Tạo **New Web Service**, kết nối repo này.
+Chọn **Web Service** (không cần Blueprint — dự án chỉ có một service, database thì ở Atlas).
+
+1. Tạo **New Web Service**, kết nối repo này. Để trống Root Directory.
 2. Cấu hình:
-   - **Build Command:** `npm install && npm run build`
+   - **Build Command:** `npm ci --include=dev && npm run build`
    - **Start Command:** `npm start`
    - **Health Check Path:** `/health`
 3. Thêm biến môi trường theo `.env.example`. Đặt `NODE_ENV=production` và `CORS_ORIGINS` trỏ tới domain Vercel của frontend.
 4. Chạy `npm run seed:admin` một lần qua Render Shell.
 
-> **Lưu ý về gói miễn phí:** Render cho instance ngủ sau 15 phút không có request, lần đánh thức mất 30–60 giây. Hãy đặt một cron job (cron-job.org hoặc GitHub Actions, đều miễn phí) gọi `/health` mỗi 10 phút.
+### ⚠️ Ba cái bẫy chắc chắn gặp
+
+**1. `--include=dev` là bắt buộc, không phải tuỳ chọn.**
+Render đặt `NODE_ENV=production`, mà npm khi thấy biến này sẽ tự bỏ qua `devDependencies` — nơi `typescript` đang nằm. Dùng `npm install` trần thì `tsc` không được cài, build **thất bại lặng lẽ**, và lúc chạy bạn nhận:
+
+```
+Error: Cannot find module '/opt/render/project/src/dist/server.js'
+```
+
+Thông báo này gây hiểu nhầm là lỗi đường dẫn, nhưng thực chất là thư mục `dist/` chưa từng được tạo ra.
+
+**2. Atlas phải mở IP `0.0.0.0/0`.**
+Render gói miễn phí không cấp IP tĩnh cho kết nối đi ra. Vào Atlas → **Network Access** → thêm `0.0.0.0/0`. Thiếu bước này, server thử kết nối 4 lần rồi thoát, và Render báo deploy thất bại.
+
+**3. Hai chuỗi JWT secret phải khác nhau.**
+`env.ts` kiểm tra và dừng ngay nếu trùng. Sinh chuỗi bằng lệnh ở phần "Chạy tại máy" phía trên, chạy hai lần.
+
+### Chống ngủ
+
+Render cho instance ngủ sau 15 phút không có request, lần đánh thức mất 30–60 giây. Hãy đặt một cron job (cron-job.org hoặc GitHub Actions, đều miễn phí) gọi `/health` mỗi 10 phút.
+
+Phiên bản Node được ghim ở file `.node-version` (Node 24 LTS) để môi trường máy bạn và Render giống nhau.
 
 ## Giấy phép
 

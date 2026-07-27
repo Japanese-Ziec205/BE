@@ -45,6 +45,8 @@ async function bootstrap() {
 }
 
 bootstrap().catch((err) => {
-  logger.fatal({ err }, 'Không khởi động được server');
+  // Chỉ in thông điệp, không đổ nguyên object lỗi: stack của Mongoose dài hàng
+  // trăm dòng JSON, làm trôi mất phần hướng dẫn khắc phục ngay phía trên.
+  logger.fatal(`Không khởi động được server: ${err instanceof Error ? err.message : String(err)}`);
   process.exit(1);
 });
