@@ -8,6 +8,7 @@ import {
   expect,
   report,
 } from './helpers';
+import { runSrsEngineTests } from './srs.test';
 
 async function main() {
   const { baseUrl } = await setupTestEnv(5555);
@@ -337,6 +338,183 @@ async function main() {
     const r = await anon.get('/public/grammar?level=N5');
     expect(r.data.total).toBeGreaterThan(0);
   });
+
+
+  // =======================================================================
+  suite('SRS & giờ học qua API');
+  // =======================================================================
+
+  {
+    const { SrsCard, Lesson } = await import('../src/models/Learning');
+    const { Types } = await import('mongoose');
+
+    // Bài học mẫu dạy 3 kana đầu tiên
+    const lesson = await Lesson.create({
+      courseSlug: 'n5-nen-tang',
+      levelCode: 'N5',
+      slug: 'bai-1-hang-a',
+      title: 'Bài 1 — Hiragana hàng あ',
+      objective: 'Đọc và viết được あ い う え お',
+      order: 1,
+      teaches: { kanaCharacters: ['あ', 'い', 'う'], kanjiCharacters: ['日'], vocabularyIds: [], grammarPointIds: [] },
+      passThreshold: 80,
+      xpReward: 20,
+    });
+
+    await test('Chưa học xong bài thì chưa có thẻ ôn tập nào', async () => {
+      const count = await SrsCard.countDocuments({ userId: new Types.ObjectId(student.userId) });
+      expect(count).toBe(0);
+    });
+
+    await test('Điểm dưới ngưỡng thì không hoàn thành, không nạp thẻ', async () => {
+      const r = await student.client.post(`/lessons/${lesson._id}/complete`, { quizScore: 60 });
+      expect(r.status).toBe(200);
+      expect(r.data.passed).toBeFalsy();
+      expect(r.data.cardsCreated).toBe(0);
+    });
+
+    await test('Đạt ngưỡng thì nạp thẻ SRS theo từng hướng ôn', async () => {
+      const r = await student.client.post(`/lessons/${lesson._id}/complete`, { quizScore: 90 });
+      expect(r.status).toBe(200);
+      expect(r.data.passed).toBeTruthy();
+      // 3 kana x 3 hướng + 1 kanji x 2 hướng = 11 thẻ
+      expect(r.data.cardsCreated).toBe(11);
+    });
+
+    await test('Hoàn thành lại lần nữa không nạp thẻ trùng', async () => {
+      const r = await student.client.post(`/lessons/${lesson._id}/complete`, { quizScore: 100 });
+      expect(r.data.cardsCreated).toBe(0);
+    });
+
+    let firstCardId = '';
+
+    await test('Hàng chờ ôn tập trả về thẻ kèm nội dung hiển thị', async () => {
+      const r = await student.client.get('/srs/queue?limit=20');
+      expect(r.status).toBe(200);
+      expect(r.data.items.length).toBeGreaterThan(0);
+      const card = r.data.items[0];
+      expect(card.content.prompt).toBeTruthy();
+      expect(card.content.answer).toBeTruthy();
+      // Bốn nút đánh giá phải kèm sẵn thời gian ôn lại tiếp theo
+      expect(Object.keys(card.nextIntervals)).toHaveLength(4);
+      firstCardId = card.cardId;
+    });
+
+    await test('Thẻ Kanji hiện kèm âm Hán-Việt', async () => {
+      const r = await student.client.get('/srs/queue?limit=20');
+      const kanjiCard = r.data.items.find(
+        (c: { itemType: string; direction: string }) =>
+          c.itemType === 'kanji' && c.direction === 'recognition',
+      );
+      expect(kanjiCard).toBeTruthy();
+      expect(kanjiCard.content.extra.sinoVietnamese).toBe('NHẬT');
+    });
+
+    await test('Ôn thẻ và nhận lịch ôn lại', async () => {
+      const r = await student.client.post('/srs/review', {
+        cardId: firstCardId,
+        rating: 3,
+        responseMs: 2400,
+      });
+      expect(r.status).toBe(200);
+      expect(r.data.card.state).toBe('learning');
+      expect(r.data.nextIntervals['1']).toBeTruthy();
+    });
+
+    await test('Không ôn được thẻ của người khác', async () => {
+      const r = await lecturer.client.post('/srs/review', { cardId: firstCardId, rating: 3 });
+      expect(r.status).toBe(404);
+      expect(r.error.code).toBe('SRS_CARD_NOT_FOUND');
+    });
+
+    await test('Thống kê SRS phản ánh đúng số thẻ', async () => {
+      const r = await student.client.get('/srs/stats');
+      expect(r.status).toBe(200);
+      expect(r.data.total).toBe(11);
+      expect(r.data.byType.kana).toBe(9);
+      expect(r.data.byType.kanji).toBe(2);
+    });
+  }
+
+  // =======================================================================
+  suite('Ghi nhận giờ học qua API');
+  // =======================================================================
+
+  {
+    const { StudySession, DailyStat } = await import('../src/models/Learning');
+    const { Types } = await import('mongoose');
+    let sessionId = '';
+
+    await test('Mở được phiên học', async () => {
+      const r = await student.client.post('/study/sessions/start', { type: 'srs' });
+      expect(r.status).toBe(200);
+      expect(r.data.sessionId).toBeTruthy();
+      sessionId = r.data.sessionId;
+    });
+
+    await test('Nhịp báo quá sớm bị từ chối', async () => {
+      const r = await student.client.post('/study/heartbeat', { sessionId });
+      expect(r.status).toBe(429);
+      expect(r.error.code).toBe('STUDY_HEARTBEAT_TOO_SOON');
+    });
+
+    await test('Nhịp báo hợp lệ cộng đúng thời gian', async () => {
+      // Lùi mốc nhịp trước 60 giây để mô phỏng một phút trôi qua
+      await StudySession.updateOne(
+        { _id: sessionId },
+        { $set: { lastHeartbeatAt: new Date(Date.now() - 60_000) } },
+      );
+      const r = await student.client.post('/study/heartbeat', { sessionId });
+      expect(r.status).toBe(200);
+      expect(r.data.countedTodaySeconds).toBe(60);
+    });
+
+    await test('Khoảng trống dài chỉ được tính tối đa 90 giây ân hạn', async () => {
+      // Người dùng bỏ đi 10 phút rồi quay lại
+      await StudySession.updateOne(
+        { _id: sessionId },
+        { $set: { lastHeartbeatAt: new Date(Date.now() - 600_000) } },
+      );
+      const r = await student.client.post('/study/heartbeat', { sessionId });
+      // 60 giây trước + tối đa 90 giây ân hạn = 150, không phải 660
+      expect(r.data.countedTodaySeconds).toBe(150);
+
+      const session = await StudySession.findById(sessionId).lean();
+      expect(session!.discardedSeconds).toBeGreaterThan(500);
+    });
+
+    await test('Trần 6 giờ mỗi ngày được áp dụng', async () => {
+      await DailyStat.updateOne(
+        { userId: new Types.ObjectId(student.userId) },
+        { $set: { studySeconds: 6 * 3600 - 10 } },
+      );
+      await StudySession.updateOne(
+        { _id: sessionId },
+        { $set: { lastHeartbeatAt: new Date(Date.now() - 60_000) } },
+      );
+      const r = await student.client.post('/study/heartbeat', { sessionId });
+      expect(r.data.countedTodaySeconds).toBe(6 * 3600);
+      expect(r.data.capReached).toBeTruthy();
+    });
+
+    await test('Đóng phiên học', async () => {
+      const r = await student.client.post(`/study/sessions/${sessionId}/end`);
+      expect(r.status).toBe(200);
+    });
+
+    await test('Nhịp báo cho phiên đã đóng bị từ chối', async () => {
+      const r = await student.client.post('/study/heartbeat', { sessionId });
+      expect(r.status).toBe(404);
+    });
+
+    await test('Lịch sử 30 ngày trả đủ cột kể cả ngày không học', async () => {
+      const r = await student.client.get('/study/history?days=30');
+      expect(r.status).toBe(200);
+      expect(r.data).toHaveLength(30);
+    });
+  }
+
+  await runSrsEngineTests();
 
   await teardownTestEnv();
   return report();
