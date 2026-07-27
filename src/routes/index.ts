@@ -5,6 +5,7 @@ import cmsRoutes from '../modules/cms/cms.routes';
 import publicRoutes from '../modules/public/public.routes';
 import learningRoutes from '../modules/srs/srs.routes';
 import examRoutes from '../modules/exam/exam.routes';
+import gamificationRoutes from '../modules/gamification/gamification.routes';
 
 const router = Router();
 
@@ -16,7 +17,7 @@ router.get('/', (_req, res) => {
       version: 'v1',
       description: 'API nền tảng học tiếng Nhật phi lợi nhuận',
       docs: 'https://github.com/Japanese-Ziec205/BE#readme',
-      endpoints: ['/auth', '/users', '/cms', '/public', '/srs', '/study', '/lessons', '/exams'],
+      endpoints: ['/auth', '/users', '/cms', '/public', '/srs', '/study', '/lessons', '/exams', '/gamification'],
     },
   });
 });
@@ -27,6 +28,7 @@ router.use('/cms', cmsRoutes);
 router.use('/public', publicRoutes);
 // srs, study và lessons dùng chung một router vì liên quan chặt tới nhau
 router.use('/exams', examRoutes);
+router.use('/gamification', gamificationRoutes);
 router.use('/', learningRoutes);
 
 export default router;

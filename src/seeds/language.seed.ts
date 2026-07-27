@@ -9,6 +9,7 @@ import { RADICALS, RADICAL_POSITIONS } from './data/radicals.data';
 import { KANJI_N5, SIMILAR_KANJI_GROUPS } from './data/kanjiN5.data';
 import { GRAMMAR_N5, KOTOWAZA, VOCABULARY_N5_SAMPLE } from './data/misc.data';
 import { seedExamTemplates } from './examTemplate.seed';
+import { seedAchievements } from './achievements.seed';
 import { buildFuriganaSegments, extractKanji, computeMaxKanjiLevel } from '../utils/japanese';
 
 export async function seedRadicals(): Promise<number> {
@@ -175,6 +176,7 @@ export async function seedAllLanguage() {
   const grammar = await seedGrammar();
   const kotowaza = await seedKotowaza();
   const examTemplates = await seedExamTemplates();
+  const achievements = await seedAchievements();
   logger.info('✅ Seed kho ngôn ngữ hoàn tất');
-  return { kana, radicals, kanji, vocabulary, grammar, kotowaza, examTemplates };
+  return { kana, radicals, kanji, vocabulary, grammar, kotowaza, examTemplates, achievements };
 }

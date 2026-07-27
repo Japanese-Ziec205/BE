@@ -12,6 +12,7 @@ import { Kana } from '../../models/Kana';
 import { Kanji } from '../../models/Kanji';
 import { Vocabulary } from '../../models/Vocabulary';
 import { GrammarPoint } from '../../models/GrammarPoint';
+import { awardXp, evaluateAchievements, updateStreak } from '../gamification/gamification.service';
 import {
   dailyNewLimit,
   interleaveByType,
@@ -322,7 +323,24 @@ export async function reviewCard(
     { $inc: { 'totals.reviewsDone': 1 } },
   );
 
+  // Ôn thẻ quá hạn được thưởng nhiều hơn: đó mới là việc dọn nợ thật sự
+  const wasOverdue = before.dueAt < new Date(Date.now() - 3 * 86_400_000);
+  const xpAmount =
+    rating === 1 ? 1 : wasOverdue ? 8 : before.state === 'new' ? 2 : 5;
+  const xp = await awardXp(userId, xpAmount, 'srs_review', {
+    type: 'srs_card',
+    id: String(card._id),
+  });
+  const streak = await updateStreak(userId);
+  const unlocked = await evaluateAchievements(userId, [
+    'review.count', 'srs.mastered', 'streak.current',
+  ]);
+
   return {
+    xpAwarded: xp.awarded,
+    leveledUp: xp.leveledUp,
+    streak: { current: streak.current, message: streak.message },
+    achievementsUnlocked: unlocked,
     card: {
       state: card.state,
       intervalDays: card.intervalDays,

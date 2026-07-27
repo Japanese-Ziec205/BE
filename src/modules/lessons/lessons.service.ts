@@ -4,6 +4,7 @@ import { Lesson, LessonProgress, DailyStat } from '../../models/Learning';
 import { LearningProfile } from '../../models/LearningProfile';
 import { enrollItems } from '../srs/srs.service';
 import { todayKey } from '../study/study.service';
+import { awardXp, evaluateAchievements, updateStreak } from '../gamification/gamification.service';
 import type { SrsItemType } from '../../models/Learning';
 
 export async function listLessons(userId: string, levelCode?: string) {
@@ -141,11 +142,33 @@ export async function completeLesson(userId: string, lessonId: string, quizScore
     );
   }
 
+  // Chuỗi ngày và XP chỉ tính cho lần hoàn thành đầu tiên
+  const streak = await updateStreak(userId);
+  let xp = { awarded: 0, leveledUp: false, message: null as string | null };
+  let unlocked: unknown[] = [];
+
+  if (isFirstCompletion) {
+    const reward = score === 100 ? lesson.xpReward + 5 : lesson.xpReward;
+    const result = await awardXp(userId, reward, 'lesson_complete', {
+      type: 'lesson',
+      id: String(lesson._id),
+    });
+    xp = { awarded: result.awarded, leveledUp: result.leveledUp, message: result.message };
+    unlocked = await evaluateAchievements(userId, [
+      'lesson.count', 'kana.count', 'kanji.count',
+      'vocabulary.count', 'grammar.count', 'streak.current',
+    ]);
+  }
+
   return {
     passed: true,
     score,
     cardsCreated,
-    xpAwarded: isFirstCompletion ? lesson.xpReward : 0,
-    message: passed && score === 100 ? 'Tuyệt vời, đúng hết!' : 'Hoàn thành bài học!',
+    xpAwarded: xp.awarded,
+    leveledUp: xp.leveledUp,
+    capMessage: xp.message,
+    streak: { current: streak.current, freezeUsed: streak.freezeUsed, message: streak.message },
+    achievementsUnlocked: unlocked,
+    message: score === 100 ? 'Tuyệt vời, đúng hết!' : 'Hoàn thành bài học!',
   };
 }

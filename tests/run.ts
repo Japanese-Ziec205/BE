@@ -10,6 +10,7 @@ import {
 } from './helpers';
 import { runSrsEngineTests } from './srs.test';
 import { runExamEngineTests } from './exam.test';
+import { runGamificationEngineTests } from './gamification.test';
 
 async function main() {
   const { baseUrl } = await setupTestEnv(5555);
@@ -517,6 +518,7 @@ async function main() {
 
   await runSrsEngineTests();
   await runExamEngineTests();
+  await runGamificationEngineTests();
 
   await teardownTestEnv();
   return report();
