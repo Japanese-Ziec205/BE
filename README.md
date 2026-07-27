@@ -65,6 +65,13 @@ src/
 ├── modules/       tách theo domain nghiệp vụ
 │   ├── auth/      controller · service · routes · validators
 │   ├── users/
+│   ├── cms/       CRUD chung + workflow duyệt + nhập CSV
+│   ├── public/    API tra cứu công khai cho SEO
+│   ├── lessons/
+│   ├── srs/       engine SM-2 (thuần khiết) + service
+│   ├── study/     ghi nhận giờ học bằng heartbeat
+│   ├── exam/      engine chấm (thuần khiết) + sinh đề
+│   ├── gamification/
 │   └── health/
 ├── routes/        gom router của các module
 ├── seeds/         script khởi tạo dữ liệu
@@ -165,12 +172,17 @@ Frontend nên bắt lỗi theo `error.code` chứ không so khớp `message` —
 | GET | `/api/v1/gamification/profile` |
 | GET | `/api/v1/gamification/achievements` |
 | GET | `/api/v1/gamification/notifications` |
-| GET | `/api/v1/users/me` | Hồ sơ đầy đủ | ✅ |
-| PATCH | `/api/v1/users/me` | Cập nhật hồ sơ | ✅ |
-| PATCH | `/api/v1/users/me/settings` | Cập nhật tuỳ chỉnh giao diện | ✅ |
-| PATCH | `/api/v1/users/me/learning` | Cập nhật mục tiêu học tập | ✅ |
-| GET | `/api/v1/users/me/stats` | Thống kê học tập | ✅ |
-| DELETE | `/api/v1/users/me` | Xoá mềm tài khoản | ✅ |
+
+**Hồ sơ người dùng** (tất cả đều cần đăng nhập)
+
+| Method | Path | Mô tả |
+|---|---|---|
+| GET | `/api/v1/users/me` | Hồ sơ đầy đủ |
+| PATCH | `/api/v1/users/me` | Cập nhật hồ sơ |
+| PATCH | `/api/v1/users/me/settings` | Cập nhật tuỳ chỉnh giao diện |
+| PATCH | `/api/v1/users/me/learning` | Cập nhật mục tiêu học tập |
+| GET | `/api/v1/users/me/stats` | Thống kê học tập |
+| DELETE | `/api/v1/users/me` | Xoá mềm tài khoản |
 
 ## Ghi chú thiết kế
 
