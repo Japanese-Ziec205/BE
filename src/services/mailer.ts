@@ -47,7 +47,66 @@ async function sendViaResend(payload: MailPayload): Promise<void> {
   }
 }
 
+/**
+ * Tách chuỗi dạng `Tên Hiển Thị <dia-chi@ten-mien.com>` thành hai phần.
+ *
+ * Resend nhận thẳng cả chuỗi, còn SendGrid bắt buộc `from` phải là object
+ * { email, name } — truyền nguyên chuỗi vào sẽ bị trả về lỗi 400.
+ */
+function parseSender(value: string): { email: string; name?: string } {
+  const match = value.match(/^\s*(.*?)\s*<\s*(.+?)\s*>\s*$/);
+  if (!match) return { email: value.trim() };
+  const [, name, email] = match;
+  return name ? { email, name } : { email };
+}
+
+async function sendViaSendGrid(payload: MailPayload): Promise<void> {
+  const res = await fetch('https://api.sendgrid.com/v3/mail/send', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${env.SENDGRID_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      personalizations: [{ to: [{ email: payload.to }] }],
+      from: parseSender(env.MAIL_FROM),
+      subject: payload.subject,
+      // SendGrid yêu cầu xếp theo thứ tự tăng dần độ "giàu" của định dạng:
+      // text/plain phải đứng trước text/html, đảo lại sẽ bị từ chối.
+      content: [
+        { type: 'text/plain', value: payload.text },
+        { type: 'text/html', value: payload.html },
+      ],
+      // Mã OTP là thư giao dịch. Nếu để SendGrid chèn link theo dõi lượt mở
+      // thì thư dễ bị đánh dấu spam và mã sẽ tới chậm hoặc không tới.
+      tracking_settings: {
+        click_tracking: { enable: false },
+        open_tracking: { enable: false },
+      },
+      mail_settings: { bypass_list_management: { enable: true } },
+    }),
+  });
+
+  // Gửi thành công trả về 202 kèm thân rỗng.
+  if (res.status === 202) return;
+
+  const body = await res.text();
+  logger.error({ status: res.status, body }, 'Gửi email qua SendGrid thất bại');
+
+  if (res.status === 401) {
+    logger.error('SENDGRID_API_KEY sai hoặc đã bị thu hồi.');
+  } else if (res.status === 403) {
+    logger.error(
+      `Địa chỉ gửi "${parseSender(env.MAIL_FROM).email}" chưa được xác minh, ` +
+        'hoặc API key thiếu quyền Mail Send. ' +
+        'Vào SendGrid → Settings → Sender Authentication để xác minh.',
+    );
+  }
+  throw new Error(`SendGrid trả về ${res.status}`);
+}
+
 export async function sendMail(payload: MailPayload): Promise<void> {
+  if (env.MAIL_PROVIDER === 'sendgrid') return sendViaSendGrid(payload);
   if (env.MAIL_PROVIDER === 'resend') return sendViaResend(payload);
   return sendViaConsole(payload);
 }

@@ -24,8 +24,9 @@ const envSchema = z.object({
 
   BCRYPT_ROUNDS: z.coerce.number().int().min(10).max(15).default(12),
 
-  MAIL_PROVIDER: z.enum(['console', 'resend']).default('console'),
+  MAIL_PROVIDER: z.enum(['console', 'resend', 'sendgrid']).default('console'),
   RESEND_API_KEY: z.string().optional(),
+  SENDGRID_API_KEY: z.string().optional(),
   MAIL_FROM: z.string().default('Nihongo Kizuna <onboarding@resend.dev>'),
 
   ADMIN_SEED_EMAIL: z.string().email().optional(),
@@ -57,6 +58,22 @@ if (raw.JWT_ACCESS_SECRET === raw.JWT_REFRESH_SECRET) {
 if (raw.MAIL_PROVIDER === 'resend' && !raw.RESEND_API_KEY) {
   console.error('\n❌ MAIL_PROVIDER=resend nhưng thiếu RESEND_API_KEY.\n');
   process.exit(1);
+}
+
+if (raw.MAIL_PROVIDER === 'sendgrid') {
+  if (!raw.SENDGRID_API_KEY) {
+    console.error('\n❌ MAIL_PROVIDER=sendgrid nhưng thiếu SENDGRID_API_KEY.\n');
+    process.exit(1);
+  }
+  // SendGrid chỉ nhận thư từ địa chỉ đã được xác minh (Single Sender hoặc
+  // Domain Authentication). Địa chỉ mặc định của Resend chắc chắn sẽ bị từ
+  // chối với lỗi 403, nên chặn ngay lúc khởi động cho dễ hiểu.
+  if (raw.MAIL_FROM.includes('resend.dev')) {
+    console.error('\n❌ MAIL_FROM vẫn đang dùng địa chỉ mặc định của Resend.');
+    console.error('   SendGrid chỉ gửi được từ địa chỉ đã xác minh trong');
+    console.error('   Settings → Sender Authentication.\n');
+    process.exit(1);
+  }
 }
 
 export const env = {

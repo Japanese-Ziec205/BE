@@ -16,7 +16,8 @@
     "lint": "eslint src --ext .ts",
     "seed": "tsx src/seeds/index.ts",
     "test": "tsx tests/run.ts",
-    "check:db": "tsx src/scripts/check-db.ts"
+    "check:db": "tsx src/scripts/check-db.ts",
+    "check:mail": "tsx src/scripts/check-mail.ts"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
