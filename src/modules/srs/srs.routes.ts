@@ -21,6 +21,45 @@ router.get(
   ),
 );
 
+/**
+ * Thêm chữ vào bộ ôn tập.
+ *
+ * Trước đây thẻ SRS chỉ sinh ra khi học viên hoàn thành một bài học. Nhưng kho
+ * bài học vẫn đang được biên soạn, nên trên thực tế không ai tạo được thẻ nào
+ * và trang Ôn tập luôn trống — vòng học bị đứt ngay từ đầu.
+ *
+ * Đường này cho phép chọn thẳng chữ từ bảng chữ cái hay danh sách Kanji để đưa
+ * vào ôn. enrollItems dùng upsert nên bấm nhiều lần cũng không tạo thẻ trùng.
+ */
+const enrollSchema = z.object({
+  items: z
+    .array(
+      z.object({
+        itemType: z.enum(['kana', 'kanji', 'vocabulary', 'grammar']),
+        itemKey: z.string().trim().min(1).max(64),
+      }),
+    )
+    .min(1, 'Cần ít nhất một mục')
+    // Giới hạn để một lần bấm không nạp cả kho vào bộ ôn: học viên nhận 200 thẻ
+    // đến hạn ngay hôm sau thì gần như chắc chắn sẽ bỏ cuộc.
+    .max(50, 'Mỗi lần thêm tối đa 50 mục'),
+});
+
+router.post(
+  '/srs/enroll',
+  validate(enrollSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const created = await srs.enrollItems(req.user!.id, req.body.items);
+    ok(res, {
+      cardsCreated: created,
+      message:
+        created > 0
+          ? `Đã thêm ${created} thẻ vào bộ ôn tập.`
+          : 'Những mục này đã có sẵn trong bộ ôn tập của bạn.',
+    });
+  }),
+);
+
 const reviewSchema = z.object({
   cardId: z.string().min(1),
   rating: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)]),

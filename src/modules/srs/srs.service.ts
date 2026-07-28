@@ -3,6 +3,7 @@ import { AppError } from '../../utils/AppError';
 import {
   SrsCard,
   ReviewLog,
+  DailyStat,
   type ISrsCard,
   type SrsDirection,
   type SrsItemType,
@@ -13,6 +14,7 @@ import { Kanji } from '../../models/Kanji';
 import { Vocabulary } from '../../models/Vocabulary';
 import { GrammarPoint } from '../../models/GrammarPoint';
 import { awardXp, evaluateAchievements, updateStreak } from '../gamification/gamification.service';
+import { todayKey } from '../study/study.service';
 import {
   dailyNewLimit,
   interleaveByType,
@@ -321,6 +323,20 @@ export async function reviewCard(
   await LearningProfile.updateOne(
     { userId: new Types.ObjectId(userId) },
     { $inc: { 'totals.reviewsDone': 1 } },
+  );
+
+  /**
+   * Ghi thêm vào thống kê theo NGÀY, không chỉ tổng luỹ kế.
+   *
+   * Hai con số này phục vụ hai việc khác nhau: totals.reviewsDone là tổng từ
+   * trước tới nay, còn DailyStat.reviewsDone là số của riêng hôm nay — thứ mà
+   * trang chính và biểu đồ lịch sử đọc. Thiếu dòng này thì người học ôn cả
+   * buổi vẫn thấy "0 lượt ôn hôm nay", và biểu đồ 30 ngày phẳng lì.
+   */
+  await DailyStat.updateOne(
+    { userId: new Types.ObjectId(userId), date: todayKey() },
+    { $inc: { reviewsDone: 1 } },
+    { upsert: true },
   );
 
   // Ôn thẻ quá hạn được thưởng nhiều hơn: đó mới là việc dọn nợ thật sự

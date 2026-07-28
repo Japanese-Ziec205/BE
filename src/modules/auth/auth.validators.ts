@@ -25,11 +25,15 @@ export const passwordSchema = z
     'Mật khẩu không được là chuỗi ký tự liên tiếp',
   );
 
+/**
+ * Chỉ nhận email. Hệ thống đã bỏ đăng ký bằng số điện thoại vì không gửi được
+ * SMS xác thực miễn phí — chi tiết ở utils/identifier.ts.
+ */
 export const identifierSchema = z
   .string()
   .trim()
-  .min(3, 'Vui lòng nhập email hoặc số điện thoại')
-  .refine(isValidIdentifier, 'Email hoặc số điện thoại không hợp lệ');
+  .min(3, 'Vui lòng nhập địa chỉ email')
+  .refine(isValidIdentifier, 'Địa chỉ email không hợp lệ');
 
 export const registerSchema = z.object({
   identifier: identifierSchema,
@@ -49,7 +53,7 @@ export const loginSchema = z.object({
   password: z.string().min(1, 'Vui lòng nhập mật khẩu'),
 });
 
-export const otpPurposeSchema = z.enum(['verify_email', 'verify_phone', 'reset_password']);
+export const otpPurposeSchema = z.enum(['verify_email', 'reset_password']);
 
 export const sendOtpSchema = z.object({
   identifier: identifierSchema,

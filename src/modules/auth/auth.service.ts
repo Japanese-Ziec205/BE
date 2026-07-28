@@ -110,9 +110,7 @@ export async function register(input: {
   if (existing) {
     throw AppError.conflict(
       'AUTH_IDENTIFIER_TAKEN',
-      id.type === 'email'
-        ? 'Email này đã được đăng ký. Bạn có muốn đăng nhập?'
-        : 'Số điện thoại này đã được đăng ký. Bạn có muốn đăng nhập?',
+      'Email này đã được đăng ký. Bạn có muốn đăng nhập?',
     );
   }
 
@@ -140,23 +138,17 @@ export async function register(input: {
     targetId: user._id,
   });
 
-  // SMS chưa bật ở giai đoạn 1 (xem tài liệu thiết kế 03): tài khoản đăng ký
-  // bằng SĐT vẫn học được bình thường, chỉ chưa xác thực được ngay.
-  let otpSent = false;
-  if (id.type === 'email') {
-    await createAndSendOtp(id.value, 'email', 'verify_email');
-    otpSent = true;
-  }
+  // Tài khoản ở trạng thái pending_verification và KHÔNG được cấp token ở đây.
+  // Chỉ sau khi nhập đúng mã trong email (verifyOtp) mới có phiên đăng nhập.
+  await createAndSendOtp(id.value, 'email', 'verify_email');
 
   return {
     userId: String(user._id),
     identifierType: id.type,
     requiresVerification: true,
-    otpSent,
-    otpSentTo: otpSent ? maskIdentifier(id.type, id.value) : null,
-    message: otpSent
-      ? 'Đã gửi mã xác thực tới email của bạn.'
-      : 'Tài khoản đã được tạo. Xác thực qua SMS sẽ sớm được hỗ trợ — bạn vẫn học bình thường.',
+    otpSent: true,
+    otpSentTo: maskIdentifier(id.type, id.value),
+    message: 'Đã gửi mã xác thực tới email của bạn.',
   };
 }
 
@@ -176,7 +168,7 @@ export async function login(input: { identifier: string; password: string }, req
   const invalid = () =>
     AppError.unauthorized(
       'AUTH_INVALID_CREDENTIALS',
-      'Email/số điện thoại hoặc mật khẩu không đúng',
+      'Email hoặc mật khẩu không đúng',
     );
 
   if (!user) {
@@ -224,6 +216,45 @@ export async function login(input: { identifier: string; password: string }, req
 
   user.failedLoginAttempts = 0;
   user.lockedUntil = null;
+  await user.save();
+
+  /**
+   * Chưa xác thực email thì không cấp token.
+   *
+   * Việc chặn đặt SAU khi đã kiểm mật khẩu là có chủ đích: nếu chặn trước, ai
+   * cũng gõ một email bất kỳ để biết email đó đã đăng ký hay chưa. Đặt sau thì
+   * chỉ đúng chủ tài khoản mới thấy được thông báo này.
+   *
+   * Mã lỗi riêng để giao diện tự chuyển sang màn nhập mã, kèm theo email đã che
+   * bớt để hiển thị mà không lộ toàn bộ địa chỉ trong phản hồi.
+   */
+  const primary = user.identifiers.find((i) => i.isPrimary) ?? user.identifiers[0];
+  if (!user.identifiers.some((i) => i.verifiedAt !== null)) {
+    /**
+     * Gửi lại mã theo kiểu "được thì tốt".
+     *
+     * createAndSendOtp có cơ chế chặn gửi lại trong 60 giây. Người vừa đăng ký
+     * xong bấm đăng nhập luôn sẽ rơi đúng vào khoảng đó, và nếu để lỗi 429 đó
+     * ném ra ngoài thì họ nhận một thông báo hoàn toàn lạc đề trong khi mã cũ
+     * vẫn còn hiệu lực trong hộp thư. Lỗi gửi mã không được che mất lý do thật
+     * khiến đăng nhập bị chặn.
+     */
+    try {
+      await createAndSendOtp(primary.value, 'email', 'verify_email');
+    } catch (err) {
+      logger.warn(
+        { err: err instanceof Error ? err.message : String(err) },
+        'Không gửi lại được mã xác thực lúc đăng nhập — mã cũ có thể vẫn còn hiệu lực',
+      );
+    }
+
+    throw AppError.forbidden(
+      'AUTH_EMAIL_NOT_VERIFIED',
+      'Bạn cần xác thực email trước khi đăng nhập. Chúng tôi vừa gửi lại mã xác thực.',
+      { identifier: primary.value, maskedIdentifier: maskIdentifier(primary.type, primary.value) },
+    );
+  }
+
   user.lastActiveAt = new Date();
   await user.save();
 
@@ -638,7 +669,7 @@ export async function addIdentifier(userId: string, identifier: string) {
   if (taken) {
     throw AppError.conflict(
       'AUTH_IDENTIFIER_TAKEN',
-      'Email hoặc số điện thoại này đã được dùng cho tài khoản khác',
+      'Email này đã được dùng cho tài khoản khác',
     );
   }
 

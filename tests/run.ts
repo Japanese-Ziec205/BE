@@ -28,26 +28,17 @@ async function main() {
   suite('Xác thực & định danh');
   // =======================================================================
 
-  await test('Đăng ký bằng số điện thoại được chuẩn hoá về E.164', async () => {
+  await test('Đăng ký bằng số điện thoại bị từ chối — hệ thống chỉ nhận email', async () => {
     const c = createClient(baseUrl);
-    const r = await c.post('/auth/register', {
-      identifier: '0912 345 678',
-      password: 'MatKhauAnToan2026',
-      displayName: 'Người dùng SĐT',
-      acceptTerms: true,
-    });
-    expect(r.status).toBe(201);
-    expect(r.data.identifierType).toBe('phone');
-
-    // Cùng số nhưng viết dạng +84 phải bị coi là trùng
-    const dup = await c.post('/auth/register', {
-      identifier: '+84912345678',
-      password: 'MatKhauAnToan2026',
-      displayName: 'Trùng',
-      acceptTerms: true,
-    });
-    expect(dup.status).toBe(409);
-    expect(dup.error.code).toBe('AUTH_IDENTIFIER_TAKEN');
+    for (const identifier of ['0912 345 678', '+84912345678']) {
+      const r = await c.post('/auth/register', {
+        identifier,
+        password: 'MatKhauAnToan2026',
+        displayName: 'Người dùng SĐT',
+        acceptTerms: true,
+      });
+      expect(r.status).toBe(422);
+    }
   });
 
   await test('Mật khẩu quá dễ đoán bị từ chối', async () => {
@@ -73,6 +64,45 @@ async function main() {
     });
     expect(wrongPw.error.code).toBe('AUTH_INVALID_CREDENTIALS');
     expect(noUser.error.code).toBe('AUTH_INVALID_CREDENTIALS');
+  });
+
+  await test('Email chưa xác thực thì không đăng nhập được', async () => {
+    const c = createClient(baseUrl);
+    const email = `chuaxacthuc${Date.now()}@test.vn`;
+    const password = 'MatKhauAnToan2026';
+
+    const reg = await c.post('/auth/register', {
+      identifier: email,
+      password,
+      displayName: 'Chưa xác thực',
+      acceptTerms: true,
+    });
+    expect(reg.status).toBe(201);
+    // Đăng ký KHÔNG được cấp token — phải xác thực email trước
+    expect(reg.data.accessToken).toBeFalsy();
+    expect(reg.data.requiresVerification).toBe(true);
+
+    const login = await c.post('/auth/login', { identifier: email, password });
+    expect(login.status).toBe(403);
+    expect(login.error.code).toBe('AUTH_EMAIL_NOT_VERIFIED');
+    // Mật khẩu đúng nhưng vẫn không có token
+    expect(login.data).toBeFalsy();
+  });
+
+  await test('Mật khẩu sai vẫn báo sai mật khẩu, không lộ trạng thái xác thực', async () => {
+    const c = createClient(baseUrl);
+    const email = `chuaxacthuc2${Date.now()}@test.vn`;
+    await c.post('/auth/register', {
+      identifier: email,
+      password: 'MatKhauAnToan2026',
+      displayName: 'Chưa xác thực 2',
+      acceptTerms: true,
+    });
+
+    // Chặn "chưa xác thực" nằm SAU bước kiểm mật khẩu, nên người gõ sai mật khẩu
+    // không thể dùng thông báo này để dò xem email nào đã đăng ký.
+    const r = await c.post('/auth/login', { identifier: email, password: 'SaiMatKhauHoanToan' });
+    expect(r.error.code).toBe('AUTH_INVALID_CREDENTIALS');
   });
 
   // =======================================================================
@@ -423,6 +453,14 @@ async function main() {
       expect(r.data.nextIntervals['1']).toBeTruthy();
     });
 
+    await test('Ôn thẻ được cộng vào thống kê hôm nay, không chỉ tổng luỹ kế', async () => {
+      // Hai con số phục vụ hai việc khác nhau: tổng luỹ kế cho hồ sơ, còn số
+      // của riêng hôm nay là thứ trang chính và biểu đồ lịch sử đọc.
+      const r = await student.client.get('/study/today');
+      expect(r.status).toBe(200);
+      expect(r.data.reviewsDone).toBeGreaterThan(0);
+    });
+
     await test('Không ôn được thẻ của người khác', async () => {
       const r = await lecturer.client.post('/srs/review', { cardId: firstCardId, rating: 3 });
       expect(r.status).toBe(404);
@@ -435,6 +473,35 @@ async function main() {
       expect(r.data.total).toBe(11);
       expect(r.data.byType.kana).toBe(9);
       expect(r.data.byType.kanji).toBe(2);
+    });
+
+    await test('Thêm thẳng chữ vào bộ ôn tập không cần qua bài học', async () => {
+      const r = await student.client.post('/srs/enroll', {
+        items: [
+          { itemType: 'kana', itemKey: 'え' },
+          { itemType: 'kana', itemKey: 'お' },
+        ],
+      });
+      expect(r.status).toBe(200);
+      // 2 kana x 3 hướng ôn
+      expect(r.data.cardsCreated).toBe(6);
+    });
+
+    await test('Thêm lại chữ đã có không tạo thẻ trùng', async () => {
+      const r = await student.client.post('/srs/enroll', {
+        items: [{ itemType: 'kana', itemKey: 'え' }],
+      });
+      expect(r.status).toBe(200);
+      expect(r.data.cardsCreated).toBe(0);
+    });
+
+    await test('Không thêm được quá 50 mục một lần', async () => {
+      const items = Array.from({ length: 51 }, (_, i) => ({
+        itemType: 'kana' as const,
+        itemKey: `x${i}`,
+      }));
+      const r = await student.client.post('/srs/enroll', { items });
+      expect(r.status).toBe(422);
     });
   }
 

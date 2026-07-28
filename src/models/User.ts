@@ -68,7 +68,7 @@ const userSchema = new Schema<IUser>(
       required: true,
       validate: {
         validator: (v: IIdentifier[]) => v.length > 0,
-        message: 'Tài khoản cần ít nhất một email hoặc số điện thoại',
+        message: 'Tài khoản cần ít nhất một email',
       },
     },
     passwordHash: { type: String, required: true, select: false },

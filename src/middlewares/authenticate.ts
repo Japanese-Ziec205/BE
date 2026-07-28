@@ -68,7 +68,7 @@ export async function requireVerified(req: Request, _res: Response, next: NextFu
     if (!hasVerified) {
       throw AppError.forbidden(
         'AUTH_NOT_VERIFIED',
-        'Bạn cần xác thực email hoặc số điện thoại trước khi dùng tính năng này',
+        'Bạn cần xác thực email trước khi dùng tính năng này',
       );
     }
     next();

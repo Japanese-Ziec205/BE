@@ -113,7 +113,6 @@ export async function sendMail(payload: MailPayload): Promise<void> {
 
 const PURPOSE_LABEL: Record<string, string> = {
   verify_email: 'Xác thực địa chỉ email',
-  verify_phone: 'Xác thực số điện thoại',
   reset_password: 'Đặt lại mật khẩu',
 };
 
