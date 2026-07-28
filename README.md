@@ -210,7 +210,7 @@ Chọn **Web Service** (không cần Blueprint — dự án chỉ có một serv
 3. Thêm biến môi trường theo `.env.example`. Đặt `NODE_ENV=production` và `CORS_ORIGINS` trỏ tới domain Vercel của frontend.
 4. Chạy `npm run seed:admin` một lần qua Render Shell.
 
-### ⚠️ Ba cái bẫy chắc chắn gặp
+### ⚠️ Bốn cái bẫy chắc chắn gặp
 
 **1. `--include=dev` là bắt buộc, không phải tuỳ chọn.**
 Render đặt `NODE_ENV=production`, mà npm khi thấy biến này sẽ tự bỏ qua `devDependencies` — nơi `typescript` đang nằm. Dùng `npm install` trần thì `tsc` không được cài, build **thất bại lặng lẽ**, và lúc chạy bạn nhận:
@@ -221,10 +221,23 @@ Error: Cannot find module '/opt/render/project/src/dist/server.js'
 
 Thông báo này gây hiểu nhầm là lỗi đường dẫn, nhưng thực chất là thư mục `dist/` chưa từng được tạo ra.
 
-**2. Atlas phải mở IP `0.0.0.0/0`.**
+**2. Chuỗi kết nối phải có `authSource=admin`.**
+Khi chuỗi có tên database ở phần đường dẫn (`/nihongo_kizuna`), driver MongoDB mặc định đi xác thực **ở chính database đó** chứ không phải ở `admin`. Tài khoản do Atlas tạo lại nằm trong `admin`, nên thiếu tham số này bạn sẽ nhận:
+
+```
+bad auth : authentication failed
+```
+
+dù mật khẩu hoàn toàn đúng. Chuỗi đầy đủ phải là:
+
+```
+mongodb+srv://<user>:<pass>@<cluster>.mongodb.net/nihongo_kizuna?retryWrites=true&w=majority&authSource=admin
+```
+
+**3. Atlas phải mở IP `0.0.0.0/0`.**
 Render gói miễn phí không cấp IP tĩnh cho kết nối đi ra. Vào Atlas → **Network Access** → thêm `0.0.0.0/0`. Thiếu bước này, server thử kết nối 4 lần rồi thoát, và Render báo deploy thất bại.
 
-**3. Hai chuỗi JWT secret phải khác nhau.**
+**4. Hai chuỗi JWT secret phải khác nhau.**
 `env.ts` kiểm tra và dừng ngay nếu trùng. Sinh chuỗi bằng lệnh ở phần "Chạy tại máy" phía trên, chạy hai lần.
 
 ### Chống ngủ
