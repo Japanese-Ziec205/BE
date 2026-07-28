@@ -15,7 +15,8 @@
     "seed:admin": "tsx src/seeds/admin.seed.ts",
     "lint": "eslint src --ext .ts",
     "seed": "tsx src/seeds/index.ts",
-    "test": "tsx tests/run.ts"
+    "test": "tsx tests/run.ts",
+    "check:db": "tsx src/scripts/check-db.ts"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
