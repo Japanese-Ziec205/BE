@@ -1,7 +1,13 @@
 import { Types } from 'mongoose';
 import crypto from 'node:crypto';
 import { AppError } from '../../utils/AppError';
-import { ExamAttempt, ExamTemplate, QuestionItem, type IQuestionItem } from '../../models/Assessment';
+import {
+  ExamAttempt,
+  ExamTemplate,
+  QuestionItem,
+  Passage,
+  type IQuestionItem,
+} from '../../models/Assessment';
 import { LearningProfile } from '../../models/LearningProfile';
 import { DailyStat } from '../../models/Learning';
 import { todayKey } from '../study/study.service';
@@ -124,6 +130,20 @@ export async function generateExam(userId: string, levelCode: string, variant = 
         );
       }
 
+      /**
+       * Nạp sẵn đoạn văn cho các câu đọc hiểu.
+       *
+       * Bản chụp đề phải TỰ CHỨA mọi thứ thí sinh cần đọc. Nếu chỉ lưu
+       * passageId thì câu hỏi kiểu "Tanaka mấy giờ ra khỏi nhà?" sẽ hiện lên mà
+       * không có bài đọc nào — không ai trả lời được. Lưu cả nội dung cũng bảo
+       * đảm bài thi cũ không bị đổi nghĩa khi ai đó sửa đoạn văn gốc.
+       */
+      const passageIds = [...new Set(pool.map((q) => q.passageId).filter(Boolean))];
+      const passages = passageIds.length
+        ? await Passage.find({ _id: { $in: passageIds } }).select('title body').lean()
+        : [];
+      const passageById = new Map(passages.map((p) => [String(p._id), p]));
+
       const picked = stratifiedSample(
         pool,
         mondai.questionCount,
@@ -145,6 +165,12 @@ export async function generateExam(userId: string, levelCode: string, variant = 
             // thi đã làm phải là bằng chứng nguyên vẹn.
             stem: q.stem,
             format: q.format,
+            passage: q.passageId
+              ? (() => {
+                  const p = passageById.get(String(q.passageId));
+                  return p ? { title: p.title, body: p.body } : null;
+                })()
+              : null,
             options: (q.options ?? []).map((o) => ({ id: o.id, text: o.text })),
             correctOptionIds: (q.options ?? []).filter((o) => o.isCorrect).map((o) => o.id),
             acceptedAnswers: q.acceptedAnswers ?? [],
@@ -223,7 +249,13 @@ export async function getAttempt(userId: string, attemptId: string) {
     questions: {
       order: number;
       mondaiCode: string;
-      snapshot: { stem: string; format: string; options: { id: string; text: string }[] };
+      snapshot: {
+        stem: string;
+        format: string;
+        options: { id: string; text: string }[];
+        passage: { title: string; body: string } | null;
+        orderConfig: { correctSequence: string[]; starPosition: number } | null;
+      };
       userAnswer: unknown;
       flaggedByUser: boolean;
     }[];
@@ -257,6 +289,13 @@ export async function getAttempt(userId: string, attemptId: string) {
         mondaiCode: q.mondaiCode,
         format: q.snapshot.format,
         stem: q.snapshot.stem,
+        passage: q.snapshot.passage ?? null,
+        // Dạng sắp xếp câu: chỉ gửi các mảnh đã XÁO TRỘN, tuyệt đối không gửi
+        // correctSequence — thứ tự đúng nằm ngay trong đó.
+        pieces: q.snapshot.orderConfig
+          ? [...q.snapshot.orderConfig.correctSequence].sort((a, b) => a.localeCompare(b, 'ja'))
+          : null,
+        starPosition: q.snapshot.orderConfig?.starPosition ?? null,
         options: q.snapshot.options, // ⚠ không có isCorrect
         userAnswer: q.userAnswer,
         flaggedByUser: q.flaggedByUser,
@@ -556,9 +595,12 @@ export async function reviewAttempt(userId: string, attemptId: string) {
       mondaiCode: string;
       snapshot: {
         stem: string;
+        format: string;
         options: { id: string; text: string }[];
         correctOptionIds: string[];
         explanationVi: string;
+        passage: { title: string; body: string } | null;
+        orderConfig: { correctSequence: string[]; starPosition: number } | null;
       };
       userAnswer: unknown;
       isCorrect: boolean | null;
@@ -571,7 +613,10 @@ export async function reviewAttempt(userId: string, attemptId: string) {
     questions: s.questions.map((q) => ({
       order: q.order,
       mondaiCode: q.mondaiCode,
+      format: q.snapshot.format,
       stem: q.snapshot.stem,
+      passage: q.snapshot.passage ?? null,
+      correctSequence: q.snapshot.orderConfig?.correctSequence ?? null,
       options: q.snapshot.options,
       correctOptionIds: q.snapshot.correctOptionIds,
       explanationVi: q.snapshot.explanationVi,

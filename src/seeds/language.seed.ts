@@ -8,8 +8,10 @@ import { seedKana } from './kana.seed';
 import { RADICALS, RADICAL_POSITIONS } from './data/radicals.data';
 import { KANJI_N5, SIMILAR_KANJI_GROUPS } from './data/kanjiN5.data';
 import { GRAMMAR_N5, KOTOWAZA, VOCABULARY_N5_SAMPLE } from './data/misc.data';
+import { VOCABULARY_N5_EXTRA } from './data/vocabularyN5.data';
 import { seedExamTemplates } from './examTemplate.seed';
 import { seedAchievements } from './achievements.seed';
+import { seedQuestionBank } from './questionBank.seed';
 import { buildFuriganaSegments, extractKanji, computeMaxKanjiLevel } from '../utils/japanese';
 
 export async function seedRadicals(): Promise<number> {
@@ -98,8 +100,12 @@ export async function seedVocabulary(): Promise<number> {
     kanjiLevels.set(k.character, k.jlptLevel);
   }
 
+  // Gộp bộ mẫu ban đầu với bộ mở rộng. Bộ mở rộng còn là nguồn sinh câu hỏi
+  // thi thử phần Từ vựng, nên phải nạp trước khi seed ngân hàng câu hỏi.
+  const allVocabulary = [...VOCABULARY_N5_SAMPLE, ...VOCABULARY_N5_EXTRA];
+
   await Vocabulary.bulkWrite(
-    VOCABULARY_N5_SAMPLE.map((v) => {
+    allVocabulary.map((v) => {
       const chars = extractKanji(v.word);
       return {
         updateOne: {
@@ -127,8 +133,8 @@ export async function seedVocabulary(): Promise<number> {
       };
     }),
   );
-  logger.info(`   Từ vựng N5 (mẫu): ${VOCABULARY_N5_SAMPLE.length}`);
-  return VOCABULARY_N5_SAMPLE.length;
+  logger.info(`   Từ vựng N5: ${allVocabulary.length}`);
+  return allVocabulary.length;
 }
 
 export async function seedGrammar(): Promise<number> {
@@ -176,7 +182,12 @@ export async function seedAllLanguage() {
   const grammar = await seedGrammar();
   const kotowaza = await seedKotowaza();
   const examTemplates = await seedExamTemplates();
+  // Phải chạy SAU seedVocabulary: câu hỏi phần Từ vựng được sinh từ kho từ
+  const questions = await seedQuestionBank();
   const achievements = await seedAchievements();
   logger.info('✅ Seed kho ngôn ngữ hoàn tất');
-  return { kana, radicals, kanji, vocabulary, grammar, kotowaza, examTemplates, achievements };
+  return {
+    kana, radicals, kanji, vocabulary, grammar, kotowaza,
+    examTemplates, questions, achievements,
+  };
 }

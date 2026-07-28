@@ -6,6 +6,7 @@ import { Kana } from '../../models/Kana';
 import { Kanji } from '../../models/Kanji';
 import { Radical } from '../../models/Radical';
 import { GrammarPoint } from '../../models/GrammarPoint';
+import { Vocabulary } from '../../models/Vocabulary';
 import { Kotowaza } from '../../models/Kotowaza';
 import { User } from '../../models/User';
 import { LearningProfile } from '../../models/LearningProfile';
@@ -114,6 +115,40 @@ router.get(
       .lean();
     res.setHeader('Cache-Control', CACHE_24H);
     return ok(res, { total: items.length, items });
+  }),
+);
+
+/**
+ * Danh sách từ vựng theo cấp độ.
+ *
+ * Có phân trang vì kho từ sẽ lên tới hàng nghìn mục khi mở rộng lên N1 — trả
+ * hết một lần sẽ ngốn dung lượng mạng của đúng nhóm người dùng mà dự án nhắm
+ * tới: điện thoại cũ, mạng tính theo dung lượng.
+ */
+router.get(
+  '/vocabulary',
+  asyncHandler(async (req: Request, res: Response) => {
+    const level = (req.query.level as string) ?? 'N5';
+    const limit = Math.min(200, Number(req.query.limit) || 60);
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const topic = req.query.topic as string | undefined;
+
+    const filter: Record<string, unknown> = { jlptLevel: level, status: 'published' };
+    if (topic) filter.topics = topic;
+
+    const [items, total, topics] = await Promise.all([
+      Vocabulary.find(filter)
+        .select('word reading meaningsVi partOfSpeech topics jlptLevel furiganaSegments')
+        .sort({ word: 1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .lean(),
+      Vocabulary.countDocuments(filter),
+      Vocabulary.distinct('topics', { jlptLevel: level, status: 'published' }),
+    ]);
+
+    res.setHeader('Cache-Control', CACHE_1H);
+    return ok(res, { level, page, limit, total, topics: topics.filter(Boolean).sort(), items });
   }),
 );
 

@@ -31,7 +31,15 @@ router.get(
   '/pool-health',
   requirePermission('exam.create'),
   asyncHandler(async (req: Request, res: Response) =>
-    ok(res, await exam.checkPoolHealth((req.query.level as string) ?? 'N5')),
+    ok(
+      res,
+      await exam.checkPoolHealth(
+        (req.query.level as string) ?? 'N5',
+        // Thiếu tham số này thì mọi lần kiểm tra đều trả về bản 'standard',
+        // và quản trị viên sẽ tưởng biến thể mình đang soạn vẫn ổn.
+        (req.query.variant as string) ?? 'standard',
+      ),
+    ),
   ),
 );
 

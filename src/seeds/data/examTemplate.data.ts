@@ -144,3 +144,34 @@ export const PASSING_THRESHOLDS = {
   N2: { total: 90, sections: [{ max: 60, min: 19 }, { max: 60, min: 19 }, { max: 60, min: 19 }] },
   N1: { total: 100, sections: [{ max: 60, min: 19 }, { max: 60, min: 19 }, { max: 60, min: 19 }] },
 };
+
+/**
+ * Biến thể "Đọc – Viết": bỏ phần Nghe hiểu.
+ *
+ * Lý do tồn tại: phần Nghe cần file âm thanh, mà kho âm thanh chưa có. Nếu chỉ
+ * giữ mỗi bản chuẩn thì mọi lần tạo đề đều thất bại vì thiếu câu hỏi Nghe, và
+ * người học không thi thử được gì cả. Bản này cho phép luyện ngay hai kỹ năng
+ * đã được ưu tiên từ đầu dự án, còn bản chuẩn sẽ dùng được khi có audio.
+ *
+ * Điểm tối đa giữ nguyên tỉ lệ của JLPT thật cho hai phần này: 120 điểm, điểm
+ * liệt 38. Ngưỡng đỗ tổng lấy 60/120 — tương ứng 50% như quy tắc chung của
+ * JLPT, KHÔNG dùng 80 của bản đủ ba phần vì thang điểm đã khác.
+ */
+export const N5_READING_WRITING_TEMPLATE = {
+  ...N5_TEMPLATE,
+  name: 'Đề luyện N5 — Đọc & Viết',
+  variant: 'reading_writing',
+  totalDurationMinutes: 60,
+  totalMaxScore: 120,
+  totalRequired: 60,
+  sections: N5_TEMPLATE.sections.filter((s) => s.code !== 'listening'),
+  scoringSections: [
+    {
+      code: 'language_reading',
+      nameVi: 'Kiến thức ngôn ngữ & Đọc hiểu',
+      includesSections: ['vocabulary', 'grammar_reading'],
+      maxScore: 120,
+      minPassScore: 38,
+    },
+  ],
+};

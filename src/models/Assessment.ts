@@ -359,6 +359,13 @@ export interface IExamAttempt extends Document<Types.ObjectId> {
       mondaiCode: string;
       order: number;
       /** Bản sao bất biến — nội dung gốc có thể bị sửa sau này. */
+      /**
+       * Bản chụp BẤT BIẾN của câu hỏi tại thời điểm sinh đề.
+       *
+       * Phải TỰ CHỨA mọi thứ cần để làm và chấm lại bài: kể cả nội dung đoạn
+       * văn đọc hiểu. Nếu chỉ lưu tham chiếu thì sửa đoạn văn gốc sẽ làm đổi
+       * nghĩa những bài thi đã nộp từ trước.
+       */
       snapshot: {
         stem: string;
         format: string;
@@ -366,6 +373,8 @@ export interface IExamAttempt extends Document<Types.ObjectId> {
         correctOptionIds: string[];
         acceptedAnswers: string[];
         explanationVi: string;
+        passage: { title: string; body: string } | null;
+        orderConfig: { correctSequence: string[]; starPosition: number } | null;
       };
       userAnswer: unknown;
       isCorrect: boolean | null;

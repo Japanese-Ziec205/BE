@@ -100,7 +100,7 @@ Frontend nên bắt lỗi theo `error.code` chứ không so khớp `message` —
 | Method | Path | Mô tả | Cần đăng nhập |
 |---|---|---|:---:|
 | GET | `/health` | Trạng thái dịch vụ (dùng cho cron chống ngủ) | |
-| POST | `/api/v1/auth/register` | Đăng ký bằng email **hoặc** SĐT | |
+| POST | `/api/v1/auth/register` | Đăng ký (chỉ email), gửi mã xác thực | |
 | POST | `/api/v1/auth/login` | Đăng nhập | |
 | POST | `/api/v1/auth/refresh` | Xoay token (dùng cookie `rt`) | |
 | POST | `/api/v1/auth/logout` | Đăng xuất phiên hiện tại | |
@@ -113,7 +113,7 @@ Frontend nên bắt lỗi theo `error.code` chứ không so khớp `message` —
 | POST | `/api/v1/auth/change-password` | Đổi mật khẩu | ✅ |
 | GET | `/api/v1/auth/sessions` | Danh sách thiết bị đang đăng nhập | ✅ |
 | DELETE | `/api/v1/auth/sessions/:id` | Đăng xuất một thiết bị từ xa | ✅ |
-| POST | `/api/v1/auth/identifiers` | Thêm email/SĐT phụ | ✅ |
+| POST | `/api/v1/auth/identifiers` | Thêm email phụ | ✅ |
 
 **Học tập & Ôn tập**
 
@@ -126,8 +126,10 @@ Frontend nên bắt lỗi theo `error.code` chứ không so khớp `message` —
 | POST | `/api/v1/srs/review` | Gửi kết quả ôn một thẻ |
 | GET | `/api/v1/srs/stats` | Thống kê và dự báo 7 ngày tới |
 | GET | `/api/v1/srs/leeches` | Danh sách chữ khó nhằn |
+| POST | `/api/v1/srs/enroll` | Thêm chữ vào bộ ôn tập, không cần qua bài học |
+| POST | `/api/v1/srs/cards/:id/reset` | Cho một thẻ học lại từ đầu |
 | POST | `/api/v1/study/sessions/start` | Mở phiên học |
-| POST | `/api/v1/study/heartbeat` | Nhịp báo mỗi 60 giây |
+| POST | `/api/v1/study/heartbeat` | Nhịp báo mỗi 55–75 giây (xem ghi chú) |
 | GET | `/api/v1/study/today` | Giờ học hôm nay so với mục tiêu |
 | GET | `/api/v1/study/history` | Lịch sử theo ngày |
 
@@ -186,7 +188,15 @@ Frontend nên bắt lỗi theo `error.code` chứ không so khớp `message` —
 
 ## Ghi chú thiết kế
 
-**Định danh là một mảng, không phải hai cột riêng.** Người dùng đăng ký bằng email hay số điện thoại đều được, và giao diện chỉ cần một ô nhập. Email được chuẩn hoá (Gmail bỏ dấu chấm và phần `+tag`), số điện thoại chuyển sang chuẩn E.164 mặc định vùng Việt Nam. Nhờ vậy `Linh.NG+test@Gmail.com` và `linhng@gmail.com` được nhận là cùng một tài khoản.
+**Chỉ đăng ký bằng email, và bắt buộc xác thực.** Ban đầu hệ thống nhận cả số điện thoại, nhưng gửi SMS xác thực tại Việt Nam đều mất phí và cần đăng ký brandname — không khả thi với một dự án phi lợi nhuận. Số điện thoại không xác thực được thì chỉ là một ô nhập ai cũng bịa được, tức là mở đường cho tài khoản rác. Đăng ký **không** cấp token; phải nhập đúng mã 6 số gửi về email mới có phiên đăng nhập.
+
+Chỗ chặn "chưa xác thực" đặt SAU bước kiểm mật khẩu là có chủ đích: chặn trước thì ai gõ một email bất kỳ cũng biết được email đó đã đăng ký hay chưa.
+
+**Định danh vẫn là một mảng, không phải một cột.** Một tài khoản có thể gắn nhiều email (tối đa 4). Email được chuẩn hoá — Gmail bỏ dấu chấm và phần `+tag` — nên `Linh.NG+test@Gmail.com` và `linhng@gmail.com` được nhận là cùng một tài khoản. Kiểu `phone` vẫn còn trong union vì vài tài khoản cũ mang định danh dạng đó; chỉ chặn ở đường vào, không xoá dữ liệu đã có.
+
+**Bản chụp đề thi phải tự chứa mọi thứ.** Khi sinh đề, nội dung đoạn văn đọc hiểu được sao chép vào bản chụp chứ không chỉ lưu tham chiếu. Hai lý do: nếu chỉ lưu `passageId` thì câu hỏi kiểu "Tanaka mấy giờ ra khỏi nhà?" sẽ hiện lên mà không có bài đọc nào; và sửa đoạn văn gốc sẽ làm đổi nghĩa những bài thi đã nộp từ trước.
+
+**Nhịp báo giờ học bị coi là robot nếu quá đều.** 6 nhịp gần nhất lệch nhau dưới 0,5 giây thì phiên bị đánh dấu đáng ngờ và thời gian KHÔNG được cộng. Frontend vì vậy phải gửi với khoảng cách ngẫu nhiên 55–75 giây, không dùng `setInterval` cố định.
 
 **Refresh token không phải JWT.** Nó là chuỗi ngẫu nhiên, lưu trong DB dạng băm SHA-256. Lý do: cần thu hồi được ngay lập tức, mà JWT thì không — đã phải tra DB để kiểm tra thu hồi thì JWT không còn lợi ích gì.
 
@@ -256,15 +266,26 @@ Phiên bản Node được ghim ở file `.node-version` (Node 24 LTS) để mô
 | 4 | Ngân hàng câu hỏi 11 định dạng, engine chấm | ✅ |
 | 5 | Ma trận đề N5, engine sinh đề, chấm điểm liệt kép | ✅ |
 | 6 | XP, chuỗi ngày có bùa cứu, 24 huy hiệu | ✅ |
-| — | **Test: 101/101 ca đạt** | ✅ |
+| — | **Test: 121/121 ca đạt** | ✅ |
+
+**Ngân hàng câu hỏi hiện có: 338 câu N5.** Trong đó 252 câu đọc/viết Kanji được
+SINH TỰ ĐỘNG từ kho từ vựng — đáp án lấy thẳng từ cặp (word, reading) nên không
+thể lệch so với dữ liệu gốc; 86 câu ngữ pháp, ngữ cảnh và đọc hiểu soạn tay kèm
+3 đoạn văn. Đủ để sinh đề, nhưng vài mondai còn mỏng nên hai lần thi liên tiếp
+có thể gặp lại câu cũ — xem `/exams/pool-health` để biết phần nào cần bổ sung.
+
+**Hai biến thể đề N5:**
+- `reading_writing` — 64 câu, 60 phút, 120 điểm. **Dùng được ngay.**
+- `standard` — 88 câu, 90 phút, 180 điểm, có phần Nghe. Chưa dùng được vì thiếu
+  file âm thanh; `/exams/generate` sẽ báo `EXAM_INSUFFICIENT_POOL`.
 
 **Chưa có, cần bổ sung:**
 - Dữ liệu nét bút SVG (nhập từ KanjiVG, giấy phép CC BY-SA). Chưa có thì tính
   năng chấm chữ viết tay chưa chạy được. Cố tình không bịa đường SVG vì sẽ cho
   kết quả chấm sai hoàn toàn.
 - File audio cho phần Nghe hiểu
-- Kho câu hỏi thật (mục tiêu 1.000 câu N5) — đây là việc của đội cộng tác viên
-  qua CMS, không phải việc lập trình
+- Kho bài học có cấu trúc (`Lesson`) — hiện chưa có bài nào, nên người học thêm
+  chữ vào bộ ôn trực tiếp qua `/srs/enroll` thay vì hoàn thành bài học
 
 ## Giấy phép
 
