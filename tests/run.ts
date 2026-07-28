@@ -459,6 +459,39 @@ async function main() {
       expect(r.data.nextIntervals['1']).toBeTruthy();
     });
 
+    await test('Mỗi thẻ kèm 4 lựa chọn trắc nghiệm hợp lệ', async () => {
+      const r = await student.client.get('/srs/queue?limit=20');
+      const withChoices = r.data.items.filter(
+        (c: { choices: string[] | null }) => c.choices !== null,
+      );
+      expect(withChoices.length).toBeGreaterThan(0);
+
+      for (const card of withChoices) {
+        // Đủ bốn phương án, không trùng nhau, và luôn chứa đáp án đúng —
+        // thiếu một trong ba điều này là câu hỏi mất tác dụng đo lường.
+        expect(card.choices).toHaveLength(4);
+        expect(new Set(card.choices).size).toBe(4);
+        expect(card.choices.includes(card.content.answer)).toBe(true);
+      }
+    });
+
+    await test('Lựa chọn kana không trộn Hiragana với Katakana', async () => {
+      // Trộn hai bảng chữ thì đáp án lộ ngay vì hình dạng khác hẳn nhau,
+      // người học không cần nhớ cách đọc vẫn chọn đúng.
+      const r = await student.client.get('/srs/queue?limit=20');
+      const kanaCards = r.data.items.filter(
+        (c: { itemType: string; content: { promptType: string }; choices: string[] | null }) =>
+          c.itemType === 'kana' && c.content.promptType === 'romaji' && c.choices,
+      );
+      expect(kanaCards.length).toBeGreaterThan(0);
+
+      for (const card of kanaCards) {
+        const katakana = card.choices.filter((c: string) => /[\u30A0-\u30FF]/.test(c)).length;
+        const hiragana = card.choices.filter((c: string) => /[\u3040-\u309F]/.test(c)).length;
+        expect(katakana === 0 || hiragana === 0).toBe(true);
+      }
+    });
+
     await test('Ôn thẻ được cộng vào thống kê hôm nay, không chỉ tổng luỹ kế', async () => {
       // Hai con số phục vụ hai việc khác nhau: tổng luỹ kế cho hồ sơ, còn số
       // của riêng hôm nay là thứ trang chính và biểu đồ lịch sử đọc.

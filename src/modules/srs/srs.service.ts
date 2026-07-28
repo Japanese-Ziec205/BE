@@ -72,6 +72,42 @@ export async function enrollItems(
   return result.upsertedCount;
 }
 
+/**
+ * Chọn 3 phương án nhiễu cho một đáp án, ưu tiên loại có ĐỘ DÀI TƯƠNG ĐƯƠNG.
+ *
+ * Nhiễu quá lệch làm câu hỏi mất tác dụng đo lường: nếu đáp án dài 6 âm tiết mà
+ * ba nhiễu chỉ 2 âm tiết, người học loại trừ được ngay mà không cần nhớ gì.
+ *
+ * Lấy rộng gấp mấy lần số cần rồi bốc ngẫu nhiên, để hai lần gặp cùng một thẻ
+ * không nhận đúng một bộ phương án — nếu cố định, người học sẽ nhớ vị trí đáp
+ * án thay vì nhớ nghĩa.
+ */
+function pickDistractors(correct: string, pool: string[], count = 3): string[] {
+  const target = correct.length;
+  const candidates = [...new Set(pool)]
+    .filter((v) => v && v !== correct)
+    .map((value) => ({ value, gap: Math.abs(value.length - target) }))
+    .sort((a, b) => a.gap - b.gap)
+    .slice(0, Math.max(count * 4, 12))
+    .map((x) => x.value);
+
+  const picked: string[] = [];
+  while (picked.length < count && candidates.length > 0) {
+    const [taken] = candidates.splice(Math.floor(Math.random() * candidates.length), 1);
+    picked.push(taken);
+  }
+  return picked;
+}
+
+function shuffle<T>(items: T[]): T[] {
+  const arr = [...items];
+  for (let i = arr.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
 /** Nạp nội dung hiển thị cho từng thẻ, gộp truy vấn theo loại để tránh N+1. */
 async function hydrateCards(cards: ISrsCard[]) {
   const byType = {
@@ -106,6 +142,53 @@ async function hydrateCards(cards: ISrsCard[]) {
     grammar: new Map(grammar.map((g) => [String(g._id), g])),
   };
 
+  /**
+   * Kho lấy phương án nhiễu, chỉ nạp cho những loại thực sự có trong hàng chờ.
+   *
+   * Kana lấy riêng theo bảng chữ (hiragana / katakana): trộn あ với ア thì đáp
+   * án lộ ngay vì hình dạng khác hẳn nhau, chưa cần biết cách đọc.
+   */
+  const kanaScripts = [...new Set(kana.map((k) => k.script))];
+  const [kanaPool, kanjiPool, vocabPool, grammarPool] = await Promise.all([
+    kanaScripts.length
+      ? Kana.find({ script: { $in: kanaScripts } }).select('character romaji script').limit(300).lean()
+      : Promise.resolve([]),
+    byType.kanji.length
+      ? Kanji.find({ jlptLevel: 'N5' }).select('character meaningsVi').limit(300).lean()
+      : Promise.resolve([]),
+    byType.vocabulary.length
+      ? Vocabulary.find({ status: 'published' }).select('word meaningsVi').limit(300).lean()
+      : Promise.resolve([]),
+    byType.grammar.length
+      ? GrammarPoint.find({ status: 'published' }).select('pattern meaningVi').limit(200).lean()
+      : Promise.resolve([]),
+  ]);
+
+  const pools = {
+    kanaCharacter: kanaPool.map((k) => k.character),
+    kanaRomaji: kanaPool.map((k) => k.romaji),
+    kanjiCharacter: kanjiPool.map((k) => k.character),
+    kanjiMeaning: kanjiPool.map((k) => (k.meaningsVi ?? []).join(', ')),
+    vocabWord: vocabPool.map((v) => v.word),
+    vocabMeaning: vocabPool.map((v) => (v.meaningsVi ?? []).join(', ')),
+    grammarPattern: grammarPool.map((g) => g.pattern),
+    grammarMeaning: grammarPool.map((g) => g.meaningVi ?? ''),
+  };
+
+  /** Kho tương ứng với ĐÁP ÁN của từng loại thẻ và hướng ôn. */
+  const poolFor = (itemType: SrsItemType, promptType: string): string[] => {
+    switch (itemType) {
+      case 'kana':
+        return promptType === 'character' ? pools.kanaRomaji : pools.kanaCharacter;
+      case 'kanji':
+        return promptType === 'character' ? pools.kanjiMeaning : pools.kanjiCharacter;
+      case 'vocabulary':
+        return promptType === 'word' ? pools.vocabMeaning : pools.vocabWord;
+      default:
+        return promptType === 'pattern' ? pools.grammarMeaning : pools.grammarPattern;
+    }
+  };
+
   return cards
     .map((card) => {
       const source = maps[card.itemType].get(card.itemKey) as Record<string, unknown> | undefined;
@@ -122,6 +205,26 @@ async function hydrateCards(cards: ISrsCard[]) {
         dueAt: card.dueAt,
       };
 
+      const content = buildCardContent(card, source);
+
+      /**
+       * Bốn lựa chọn cho chế độ trắc nghiệm.
+       *
+       * Chỉ dựng khi gom đủ 3 nhiễu; thiếu thì trả null và giao diện tự lùi về
+       * chế độ thẻ lật. Ba lựa chọn giống nhau còn tệ hơn không có trắc nghiệm:
+       * người học đoán trúng rồi tưởng mình đã thuộc.
+       *
+       * KHÔNG đánh dấu đâu là đáp án đúng, nhưng cũng không cần giấu: `answer`
+       * vốn đã nằm trong payload vì thẻ lật phải hiện được đáp án.
+       */
+      const distractors = pickDistractors(
+        content.answer,
+        poolFor(card.itemType, content.promptType),
+      );
+      const choices = distractors.length === 3
+        ? shuffle([content.answer, ...distractors])
+        : null;
+
       return {
         cardId: String(card._id),
         itemType: card.itemType,
@@ -129,7 +232,8 @@ async function hydrateCards(cards: ISrsCard[]) {
         direction: card.direction,
         state: card.state,
         isOverdue: card.dueAt < new Date(Date.now() - 86_400_000),
-        content: buildCardContent(card, source),
+        content,
+        choices,
         nextIntervals: previewIntervals(state),
       };
     })
