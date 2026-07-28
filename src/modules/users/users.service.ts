@@ -89,10 +89,30 @@ export async function updateSettings(userId: string, input: Record<string, unkno
   return user.settings;
 }
 
+/** Thứ tự từ dễ tới khó — dùng để mở khoá các cấp thấp hơn cấp đã chọn. */
+export const LEVEL_ORDER = ['N5', 'N4', 'N3', 'N2', 'N1'] as const;
+
 export async function updateLearningProfile(userId: string, input: Record<string, unknown>) {
+  const patch: Record<string, unknown> = { ...input };
+
+  /*
+   * Người học chọn "muốn học N3" nghĩa là họ muốn HỌC ở N3 ngay, không phải
+   * học N5 rồi hướng tới N3. Nếu chỉ ghi targetLevel thì currentLevelCode vẫn
+   * là N5, và toàn bộ phần còn lại của hệ thống — kho từ, đề thi thử, bảng xếp
+   * hạng — đều dựa vào currentLevelCode nên sẽ phục vụ sai cấp độ.
+   */
+  if (typeof patch.targetLevel === 'string') {
+    const index = LEVEL_ORDER.indexOf(patch.targetLevel as (typeof LEVEL_ORDER)[number]);
+    if (index >= 0) {
+      patch.currentLevelCode = patch.targetLevel;
+      // Mở luôn các cấp dễ hơn: người nhắm N3 vẫn cần tra lại từ vựng N5.
+      patch.unlockedLevelCodes = LEVEL_ORDER.slice(0, index + 1);
+    }
+  }
+
   const profile = await LearningProfile.findOneAndUpdate(
     { userId },
-    { $set: input },
+    { $set: patch },
     { new: true, upsert: true },
   );
   return profile;

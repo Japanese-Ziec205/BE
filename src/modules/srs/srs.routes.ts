@@ -6,6 +6,8 @@ import { ok } from '../../utils/response';
 import * as srs from './srs.service';
 import * as study from '../study/study.service';
 import * as lessons from '../lessons/lessons.service';
+import * as discover from '../discover/discover.service';
+import * as billing from '../billing/billing.service';
 
 const router = Router();
 router.use(authenticate);
@@ -69,12 +71,15 @@ const reviewSchema = z.object({
 router.post(
   '/srs/review',
   validate(reviewSchema),
-  asyncHandler(async (req: Request, res: Response) =>
-    ok(
+  asyncHandler(async (req: Request, res: Response) => {
+    // Hạn mức của gói miễn phí kiểm ở đây, TRƯỚC khi thẻ được cập nhật lịch —
+    // chấm rồi mới báo hết lượt thì người học mất công ôn mà không được ghi nhận.
+    await billing.assertReviewQuotaAvailable(req.user!.id);
+    return ok(
       res,
       await srs.reviewCard(req.user!.id, req.body.cardId, req.body.rating, req.body.responseMs ?? 0),
-    ),
-  ),
+    );
+  }),
 );
 
 router.get(
@@ -91,6 +96,17 @@ router.post(
   '/srs/cards/:id/reset',
   asyncHandler(async (req: Request, res: Response) =>
     ok(res, await srs.resetCard(req.user!.id, req.params.id)),
+  ),
+);
+
+// ---------------------------------------------------------------------------
+// Khám phá — nội dung tự đổi ở trang chính
+// ---------------------------------------------------------------------------
+
+router.get(
+  '/discover',
+  asyncHandler(async (req: Request, res: Response) =>
+    ok(res, await discover.getDiscoverFeed(req.user!.id, Math.min(20, Number(req.query.limit) || 8))),
   ),
 );
 

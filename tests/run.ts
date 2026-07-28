@@ -633,6 +633,33 @@ async function main() {
     let attemptId = '';
     let firstSectionCode = '';
 
+    await test('Người dùng miễn phí KHÔNG thi thử được', async () => {
+      // Chốt chặn nằm trong generateExam nên mọi đường dẫn tới việc sinh đề
+      // đều bị chặn, không riêng route này.
+      const r = await student.client.post('/exams/generate', {
+        levelCode: 'N5',
+        variant: 'reading_writing',
+      });
+      expect(r.status).toBe(403);
+      expect(r.error?.code).toBe('PREMIUM_REQUIRED');
+    });
+
+    // Cấp gói trả phí cho học viên để chạy tiếp phần còn lại của bộ kiểm thử
+    {
+      const { Subscription } = await import('../src/models/Billing');
+      const { Types } = await import('mongoose');
+      await Subscription.updateOne(
+        { userId: new Types.ObjectId(student.userId) },
+        {
+          $set: {
+            planCode: 'monthly',
+            expiresAt: new Date(Date.now() + 30 * 86_400_000),
+          },
+        },
+        { upsert: true },
+      );
+    }
+
     await test('Kho câu hỏi đủ để sinh đề Đọc–Viết', async () => {
       const r = await admin.client.get('/exams/pool-health?level=N5&variant=reading_writing');
       expect(r.status).toBe(200);
@@ -824,6 +851,243 @@ async function main() {
       expect(r.status).toBe(200);
       expect(r.data.total).toBeLessThan(all.data.total);
       expect(r.data.items.every((v: { topics: string[] }) => v.topics.includes(topic))).toBe(true);
+    });
+  }
+
+  // =======================================================================
+  suite('Gói học, hạn mức và thanh toán');
+  // =======================================================================
+
+  {
+    const crypto = await import('node:crypto');
+    const { Types } = await import('mongoose');
+    const { Subscription } = await import('../src/models/Billing');
+    const { verifyWebhookSignature } = await import('../src/services/payos');
+
+    await test('Danh sách gói là công khai, đủ hai gói với đúng giá', async () => {
+      const r = await anon.get('/billing/plans');
+      expect(r.status).toBe(200);
+      expect(r.data.plans).toHaveLength(2);
+
+      const monthly = r.data.plans.find((p: { code: string }) => p.code === 'monthly');
+      const half = r.data.plans.find((p: { code: string }) => p.code === 'half_year');
+      expect(monthly.amount).toBe(10000);
+      expect(monthly.durationDays).toBe(30);
+      expect(half.amount).toBe(50000);
+      expect(half.durationDays).toBe(180);
+    });
+
+    await test('Người dùng miễn phí có hạn mức ôn tập, không có quyền thi thử', async () => {
+      // contributor chưa được cấp gói nào — student đã bị bộ kiểm thử thi thử cấp gói
+      const r = await contributor.client.get('/billing/entitlements');
+      expect(r.status).toBe(200);
+      expect(r.data.isPremium).toBe(false);
+      expect(r.data.canTakeMockExam).toBe(false);
+      expect(r.data.reviews.limit).toBe(30);
+    });
+
+    await test('Người đã trả phí không bị giới hạn ôn tập', async () => {
+      const r = await student.client.get('/billing/entitlements');
+      expect(r.data.isPremium).toBe(true);
+      expect(r.data.canTakeMockExam).toBe(true);
+      // null nghĩa là không giới hạn, khác hẳn với 0 nghĩa là hết lượt
+      expect(r.data.reviews.limit).toBe(null);
+    });
+
+    await test('Gói hết hạn thì mất quyền, KHÔNG cần tác vụ dọn dẹp nào', async () => {
+      /*
+       * Quyền được tính từ mốc thời gian chứ không từ một cờ boolean. Đẩy hạn
+       * về quá khứ là quyền mất ngay lập tức — nếu dùng cờ isActive thì phải
+       * chờ một cron job, và ngày cron chết là ngày ai cũng thành trả phí.
+       */
+      await Subscription.updateOne(
+        { userId: new Types.ObjectId(student.userId) },
+        { $set: { expiresAt: new Date(Date.now() - 1000) } },
+      );
+
+      const r = await student.client.get('/billing/entitlements');
+      expect(r.data.isPremium).toBe(false);
+      expect(r.data.canTakeMockExam).toBe(false);
+
+      const exam = await student.client.post('/exams/generate', {
+        levelCode: 'N5',
+        variant: 'reading_writing',
+      });
+      expect(exam.status).toBe(403);
+
+      // Trả lại gói còn hạn để không ảnh hưởng các ca chạy sau
+      await Subscription.updateOne(
+        { userId: new Types.ObjectId(student.userId) },
+        { $set: { expiresAt: new Date(Date.now() + 30 * 86_400_000) } },
+      );
+    });
+
+    // -------------------------------------------------------------------
+    // Chữ ký webhook — hàng phòng thủ DUY NHẤT của luồng thanh toán
+    // -------------------------------------------------------------------
+
+    const CHECKSUM_KEY = process.env.PAYOS_CHECKSUM_KEY ?? '';
+
+    /** Ký y hệt cách PayOS ký: khoá sắp theo bảng chữ cái, nối bằng &. */
+    const sign = (data: Record<string, unknown>) => {
+      const raw = Object.keys(data)
+        .sort()
+        .map((k) => `${k}=${data[k] ?? ''}`)
+        .join('&');
+      return crypto.createHmac('sha256', CHECKSUM_KEY).update(raw).digest('hex');
+    };
+
+    await test('Webhook có chữ ký đúng thì được chấp nhận', async () => {
+      const data = { orderCode: 123456, amount: 10000, code: '00', desc: 'success' };
+      expect(verifyWebhookSignature(data, sign(data))).toBe(true);
+    });
+
+    await test('⭐ Webhook bị sửa số tiền thì chữ ký KHÔNG còn hợp lệ', async () => {
+      /*
+       * Đây là ca quan trọng nhất của toàn bộ luồng thanh toán. Địa chỉ webhook
+       * công khai trên internet; nếu chữ ký không bám theo từng trường thì bất
+       * kỳ ai cũng gửi được một gói tin tự cấp cho mình gói trả phí.
+       */
+      const original = { orderCode: 123456, amount: 10000, code: '00', desc: 'success' };
+      const signature = sign(original);
+      const tampered = { ...original, amount: 1 };
+      expect(verifyWebhookSignature(tampered, signature)).toBe(false);
+    });
+
+    await test('Webhook không có chữ ký bị từ chối', async () => {
+      const data = { orderCode: 123456, amount: 10000, code: '00', desc: 'success' };
+      expect(verifyWebhookSignature(data, '')).toBe(false);
+    });
+
+    await test('Đường webhook từ chối gói tin giả mạo', async () => {
+      const r = await anon.post('/billing/webhook', {
+        code: '00',
+        data: { orderCode: 999999, amount: 10000, code: '00', desc: 'gia mao' },
+        signature: 'f'.repeat(64),
+      });
+      expect(r.status).toBe(401);
+    });
+  }
+
+  // =======================================================================
+  suite('Bảng xếp hạng theo cấp độ');
+  // =======================================================================
+
+  {
+    await test('Bảng xếp hạng trả về đúng cấp độ được hỏi', async () => {
+      const r = await student.client.get('/gamification/leaderboard?level=N5');
+      expect(r.status).toBe(200);
+      expect(r.data.levelCode).toBe('N5');
+      expect(Array.isArray(r.data.entries)).toBe(true);
+    });
+
+    await test('Thứ hạng liên tục 1..N và điểm giảm dần', async () => {
+      const r = await student.client.get('/gamification/leaderboard?level=N5&limit=50');
+      const entries = r.data.entries as { rank: number; score: number }[];
+      entries.forEach((e, i) => expect(e.rank).toBe(i + 1));
+      for (let i = 1; i < entries.length; i += 1) {
+        expect(entries[i - 1].score >= entries[i].score).toBe(true);
+      }
+    });
+
+    await test('Luôn kèm vị trí của chính người dùng', async () => {
+      // Người đứng thứ 340 vẫn cần thấy mình ở đâu, kể cả khi ngoài trang đầu
+      const r = await student.client.get('/gamification/leaderboard?level=N5');
+      expect(r.data.me === null || r.data.me.isMe === true).toBe(true);
+    });
+
+    await test('Ai tắt hiển thị thì bị gỡ khỏi bảng hoàn toàn', async () => {
+      await student.client.patch('/users/me/settings', { hideFromLeaderboard: true });
+      const hidden = await student.client.get('/gamification/leaderboard?level=N5&limit=50');
+      expect(hidden.data.entries.some((e: { isMe: boolean }) => e.isMe)).toBe(false);
+      expect(hidden.data.me).toBe(null);
+
+      await student.client.patch('/users/me/settings', { hideFromLeaderboard: false });
+    });
+  }
+
+  // =======================================================================
+  suite('Chọn cấp độ và ma trận đề');
+  // =======================================================================
+
+  {
+    await test('Chọn cấp độ muốn học thì đổi luôn cấp đang học', async () => {
+      /*
+       * "Muốn học N3" nghĩa là học Ở N3 ngay. Nếu chỉ ghi targetLevel mà
+       * currentLevelCode vẫn là N5 thì kho từ, đề thi và bảng xếp hạng đều
+       * phục vụ sai cấp độ.
+       */
+      const r = await student.client.patch('/users/me/learning', { targetLevel: 'N3' });
+      expect(r.status).toBe(200);
+      expect(r.data.currentLevelCode).toBe('N3');
+      // Cấp dễ hơn được mở kèm: người nhắm N3 vẫn cần tra lại từ vựng N5
+      expect(r.data.unlockedLevelCodes).toEqual(['N5', 'N4', 'N3']);
+
+      await student.client.patch('/users/me/learning', { targetLevel: 'N5' });
+    });
+
+    await test('Cả 5 cấp độ đều có đủ ba mức đề', async () => {
+      for (const level of ['N5', 'N4', 'N3', 'N2', 'N1']) {
+        const r = await anon.get(`/public/levels/${level}`);
+        expect(r.status).toBe(200);
+        const variants = r.data.exams.map((e: { variant: string }) => e.variant);
+        for (const tier of ['easy', 'medium', 'hard']) {
+          expect(variants.includes(tier)).toBe(true);
+        }
+      }
+    });
+
+    await test('Đề dễ được nới thời gian, đề khó bị rút ngắn', async () => {
+      const r = await anon.get('/public/levels/N5');
+      const by = (v: string) =>
+        r.data.exams.find((e: { variant: string }) => e.variant === v);
+      expect(by('easy').durationMinutes > by('medium').durationMinutes).toBe(true);
+      expect(by('hard').durationMinutes < by('medium').durationMinutes).toBe(true);
+    });
+
+    await test('Ba mức độ giữ NGUYÊN số câu, chỉ đổi độ khó', async () => {
+      // Đề dễ mà ít câu hơn đề thật thì luyện xong vào phòng thi vẫn sốc
+      const r = await anon.get('/public/levels/N5');
+      const counts = ['easy', 'medium', 'hard'].map(
+        (v) => r.data.exams.find((e: { variant: string }) => e.variant === v).questionCount,
+      );
+      expect(counts[0]).toBe(counts[1]);
+      expect(counts[1]).toBe(counts[2]);
+    });
+
+    await test('Cấp độ không tồn tại thì báo 404', async () => {
+      const r = await anon.get('/public/levels/N9');
+      expect(r.status).toBe(404);
+    });
+  }
+
+  // =======================================================================
+  suite('Khối nội dung tự đổi ở trang chính');
+  // =======================================================================
+
+  {
+    await test('Luôn trả về nội dung, kể cả với người chưa học gì', async () => {
+      // Trang chính trống trơn ngay hôm đầu là lý do rất hay khiến người ta bỏ đi
+      const r = await contributor.client.get('/discover?limit=6');
+      expect(r.status).toBe(200);
+      expect(r.data.length).toBeGreaterThan(0);
+    });
+
+    await test('Mỗi thẻ có đủ trường để hiển thị', async () => {
+      const r = await student.client.get('/discover?limit=8');
+      for (const card of r.data) {
+        expect(typeof card.key).toBe('string');
+        expect(typeof card.title).toBe('string');
+        expect(typeof card.body).toBe('string');
+        expect(['recall', 'culture', 'kotowaza'].includes(card.kind)).toBe(true);
+      }
+    });
+
+    await test('Không có thẻ nào trùng khoá', async () => {
+      // Khoá trùng làm React dựng lại sai phần tử khi băng chuyền đổi thẻ
+      const r = await student.client.get('/discover?limit=10');
+      const keys = r.data.map((c: { key: string }) => c.key);
+      expect(new Set(keys).size).toBe(keys.length);
     });
   }
 

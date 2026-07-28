@@ -11,6 +11,7 @@ import {
 import { LearningProfile } from '../../models/LearningProfile';
 import { DailyStat } from '../../models/Learning';
 import { todayKey } from '../study/study.service';
+import { getEntitlements } from '../billing/billing.service';
 import {
   gradeQuestion,
   judgeExam,
@@ -90,6 +91,22 @@ async function recentQuestionIds(userId: string, lookback: number): Promise<Set<
 }
 
 export async function generateExam(userId: string, levelCode: string, variant = 'standard') {
+  /*
+   * Chốt chặn gói trả phí đặt Ở ĐÂY chứ không ở tầng route.
+   *
+   * Mọi con đường dẫn tới việc sinh đề đều đi qua hàm này. Đặt ở route thì
+   * đường mới thêm sau này rất dễ quên kiểm tra, và một tính năng trả phí bị
+   * hở là thứ không ai báo lỗi cho mình biết.
+   */
+  const entitlements = await getEntitlements(userId);
+  if (!entitlements.canTakeMockExam) {
+    throw AppError.forbidden(
+      'PREMIUM_REQUIRED',
+      'Thi thử là tính năng của gói trả phí. Học bài và ôn tập vẫn miễn phí như thường.',
+      { feature: 'mock_exam' },
+    );
+  }
+
   const template = await ExamTemplate.findOne({ levelCode, variant, isActive: true }).lean();
   if (!template) {
     throw AppError.notFound('EXAM_TEMPLATE_NOT_FOUND', `Chưa có ma trận đề cho cấp ${levelCode}`);

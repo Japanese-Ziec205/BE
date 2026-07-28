@@ -9,6 +9,7 @@ import { RADICALS, RADICAL_POSITIONS } from './data/radicals.data';
 import { KANJI_N5, SIMILAR_KANJI_GROUPS } from './data/kanjiN5.data';
 import { GRAMMAR_N5, KOTOWAZA, VOCABULARY_N5_SAMPLE } from './data/misc.data';
 import { VOCABULARY_N5_EXTRA } from './data/vocabularyN5.data';
+import { ALL_GRAMMAR } from './data/grammar.data';
 import { seedExamTemplates } from './examTemplate.seed';
 import { seedAchievements } from './achievements.seed';
 import { seedQuestionBank } from './questionBank.seed';
@@ -138,14 +139,17 @@ export async function seedVocabulary(): Promise<number> {
 }
 
 export async function seedGrammar(): Promise<number> {
+  // Bộ N5 gốc chưa ghi jlptLevel trong dữ liệu nên phải gán ở đây; bộ mở rộng
+  // trải khắp N5–N1 nên mỗi mục tự mang cấp độ của mình.
+  const legacy = GRAMMAR_N5.map((g) => ({ ...g, jlptLevel: 'N5' as const }));
+
   await GrammarPoint.bulkWrite(
-    GRAMMAR_N5.map((g) => ({
+    [...legacy, ...ALL_GRAMMAR].map((g) => ({
       updateOne: {
         filter: { pattern: g.pattern },
         update: {
           $set: {
             ...g,
-            jlptLevel: 'N5',
             status: 'published',
             publishedAt: new Date(),
             version: 1,
@@ -155,8 +159,16 @@ export async function seedGrammar(): Promise<number> {
       },
     })),
   );
-  logger.info(`   Ngữ pháp N5: ${GRAMMAR_N5.length}`);
-  return GRAMMAR_N5.length;
+
+  const byLevel = new Map<string, number>();
+  for (const g of [...legacy, ...ALL_GRAMMAR]) {
+    byLevel.set(g.jlptLevel, (byLevel.get(g.jlptLevel) ?? 0) + 1);
+  }
+  for (const level of ['N5', 'N4', 'N3', 'N2', 'N1']) {
+    logger.info(`   Ngữ pháp ${level}: ${byLevel.get(level) ?? 0}`);
+  }
+
+  return legacy.length + ALL_GRAMMAR.length;
 }
 
 export async function seedKotowaza(): Promise<number> {

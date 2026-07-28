@@ -231,6 +231,8 @@ export interface IExamTemplate extends Document<Types.ObjectId> {
   levelCode: JlptLevel;
   name: string;
   variant: string;
+  /** Giải thích mức độ đề cho người học, hiện ngay chỗ chọn đề. */
+  descriptionVi: string;
   totalDurationMinutes: number;
   totalMaxScore: number;
   totalRequired: number;
@@ -271,6 +273,7 @@ const examTemplateSchema = new Schema<IExamTemplate>(
     levelCode: { type: String, enum: JLPT_LEVELS, required: true },
     name: { type: String, required: true },
     variant: { type: String, default: 'standard' },
+    descriptionVi: { type: String, default: '' },
     totalDurationMinutes: { type: Number, required: true },
     totalMaxScore: { type: Number, default: 180 },
     totalRequired: { type: Number, required: true },

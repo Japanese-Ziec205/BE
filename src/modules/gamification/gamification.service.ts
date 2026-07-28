@@ -417,6 +417,111 @@ export async function listAchievements(userId: string) {
     .filter(Boolean);
 }
 
+// ---------------------------------------------------------------------------
+// Bảng xếp hạng theo cấp độ
+// ---------------------------------------------------------------------------
+
+/**
+ * Điểm xếp hạng = tổng số mục đã học được.
+ *
+ * Cố ý KHÔNG dùng XP: XP cộng cả theo thời gian ngồi học và thành tích phụ, nên
+ * người rảnh rỗi luôn thắng người học hiệu quả. Đếm số chữ thật sự học được thì
+ * công bằng hơn, và cũng đúng với điều người dùng mô tả — "A học được 3 bảng
+ * chữ cái, B học được 2 bảng thì A đứng trên".
+ */
+const RANK_SCORE = {
+  $add: [
+    '$totals.kanaLearned',
+    '$totals.kanjiLearned',
+    '$totals.vocabularyLearned',
+    '$totals.grammarLearned',
+  ],
+};
+
+export async function getLeaderboard(
+  userId: string,
+  levelCode: string,
+  page = 1,
+  limit = 20,
+) {
+  const uid = new Types.ObjectId(userId);
+  const safeLimit = Math.min(50, Math.max(5, limit));
+  const skip = (Math.max(1, page) - 1) * safeLimit;
+
+  /*
+   * Người đã tắt hiển thị trong cài đặt bị loại khỏi bảng — kể cả khỏi phép
+   * đếm thứ hạng. Nửa vời (giấu tên nhưng vẫn chiếm một dòng) thì vẫn là để lộ
+   * việc họ có mặt và đứng ở đâu.
+   */
+  const rows = await LearningProfile.aggregate([
+    { $match: { currentLevelCode: levelCode } },
+    {
+      $lookup: {
+        from: 'users',
+        localField: 'userId',
+        foreignField: '_id',
+        as: 'user',
+      },
+    },
+    { $unwind: '$user' },
+    {
+      $match: {
+        'user.deletedAt': null,
+        'user.status': 'active',
+        'user.settings.hideFromLeaderboard': { $ne: true },
+      },
+    },
+    {
+      $project: {
+        userId: 1,
+        score: RANK_SCORE,
+        displayName: '$user.profile.displayName',
+        avatarPreset: '$user.profile.avatarPreset',
+        streak: '$streak.current',
+        xpLevel: '$xp.level',
+        breakdown: {
+          kana: '$totals.kanaLearned',
+          kanji: '$totals.kanjiLearned',
+          vocabulary: '$totals.vocabularyLearned',
+          grammar: '$totals.grammarLearned',
+        },
+      },
+    },
+    // Chuỗi ngày làm tiêu chí phụ: cùng số chữ thì người học đều đặn hơn đứng trên
+    { $sort: { score: -1, streak: -1, _id: 1 } },
+  ]);
+
+  const total = rows.length;
+  const ranked = rows.map((row, index) => ({
+    rank: index + 1,
+    userId: String(row.userId),
+    displayName: row.displayName,
+    avatarPreset: row.avatarPreset,
+    score: row.score,
+    streak: row.streak,
+    xpLevel: row.xpLevel,
+    breakdown: row.breakdown,
+    isMe: String(row.userId) === String(uid),
+  }));
+
+  /*
+   * Vị trí của chính người dùng luôn được trả về, kể cả khi họ nằm ngoài trang
+   * đang xem. Người đứng thứ 340 vẫn cần thấy mình ở đâu — không thấy gì cả thì
+   * bảng xếp hạng chỉ còn là nơi tôn vinh vài người đứng đầu.
+   */
+  const me = ranked.find((r) => r.isMe) ?? null;
+
+  return {
+    levelCode,
+    page: Math.max(1, page),
+    limit: safeLimit,
+    total,
+    totalPages: Math.max(1, Math.ceil(total / safeLimit)),
+    entries: ranked.slice(skip, skip + safeLimit),
+    me,
+  };
+}
+
 export async function listNotifications(userId: string, limit = 30) {
   return Notification.find({ userId: new Types.ObjectId(userId) })
     .sort({ createdAt: -1 })

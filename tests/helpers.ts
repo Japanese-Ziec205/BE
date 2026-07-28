@@ -127,6 +127,18 @@ export async function setupTestEnv(port = 5555) {
   process.env.MAIL_PROVIDER = 'console';
   process.env.PORT = String(port);
 
+  /*
+   * Khoá PayOS giả cho môi trường kiểm thử.
+   *
+   * Không có khoá thì không kiểm tra được phần quan trọng nhất của luồng thanh
+   * toán — việc xác minh chữ ký webhook. Ba giá trị này không gọi ra ngoài
+   * mạng: chỉ hàm HMAC dùng tới checksum key, còn API tạo link thì bộ kiểm thử
+   * không đụng vào.
+   */
+  process.env.PAYOS_CLIENT_ID = 'test-client-id';
+  process.env.PAYOS_API_KEY = 'test-api-key';
+  process.env.PAYOS_CHECKSUM_KEY = 'test-checksum-key-khong-dung-that';
+
   const { connectDatabase } = await import('../src/config/db');
   const { createApp } = await import('../src/app');
   await connectDatabase();

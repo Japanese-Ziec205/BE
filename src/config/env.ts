@@ -29,6 +29,15 @@ const envSchema = z.object({
   SENDGRID_API_KEY: z.string().optional(),
   MAIL_FROM: z.string().default('Nihongo Kizuna <onboarding@resend.dev>'),
 
+  /*
+   * PayOS — để optional để môi trường phát triển và bộ kiểm thử chạy được mà
+   * không cần khoá thật. Thiếu khoá thì chỉ riêng luồng thanh toán báo lỗi rõ
+   * ràng; toàn bộ phần học vẫn hoạt động bình thường.
+   */
+  PAYOS_CLIENT_ID: z.string().optional(),
+  PAYOS_API_KEY: z.string().optional(),
+  PAYOS_CHECKSUM_KEY: z.string().optional(),
+
   ADMIN_SEED_EMAIL: z.string().email().optional(),
   ADMIN_SEED_PASSWORD: z.string().optional(),
   ADMIN_SEED_NAME: z.string().default('Quản trị viên'),
@@ -74,6 +83,22 @@ if (raw.MAIL_PROVIDER === 'sendgrid') {
     console.error('   Settings → Sender Authentication.\n');
     process.exit(1);
   }
+}
+
+/*
+ * Ba khoá PayOS phải có ĐỦ hoặc KHÔNG CÓ GÌ.
+ *
+ * Có client id nhưng thiếu checksum key là trạng thái nguy hiểm nhất: hệ thống
+ * tạo được link thanh toán nên nhìn như đang chạy tốt, nhưng không xác minh
+ * được webhook nên bất kỳ ai cũng có thể tự cấp cho mình gói trả phí.
+ */
+const payosKeys = [raw.PAYOS_CLIENT_ID, raw.PAYOS_API_KEY, raw.PAYOS_CHECKSUM_KEY];
+const payosSet = payosKeys.filter(Boolean).length;
+if (payosSet > 0 && payosSet < 3) {
+  console.error('\n❌ Cấu hình PayOS thiếu. Cần ĐỦ cả ba biến:');
+  console.error('   PAYOS_CLIENT_ID, PAYOS_API_KEY, PAYOS_CHECKSUM_KEY');
+  console.error('   (hoặc bỏ trống cả ba để tắt hẳn tính năng thanh toán)\n');
+  process.exit(1);
 }
 
 export const env = {

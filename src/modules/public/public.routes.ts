@@ -8,6 +8,7 @@ import { Radical } from '../../models/Radical';
 import { GrammarPoint } from '../../models/GrammarPoint';
 import { Vocabulary } from '../../models/Vocabulary';
 import { Kotowaza } from '../../models/Kotowaza';
+import { ExamTemplate } from '../../models/Assessment';
 import { User } from '../../models/User';
 import { LearningProfile } from '../../models/LearningProfile';
 
@@ -162,6 +163,70 @@ router.get(
       .lean();
     res.setHeader('Cache-Control', CACHE_1H);
     return ok(res, { level, total: items.length, items });
+  }),
+);
+
+/**
+ * Tổng quan một cấp độ: kho kiến thức hiện có và các đề thi thử dựng được.
+ *
+ * Trả về CẢ hai con số: `available` là số mục đã nạp vào hệ thống, `expected`
+ * là số mục mà kỳ thi thật yêu cầu ở cấp đó. Chênh lệch giữa hai con số được
+ * hiển thị thẳng cho người học thay vì giấu đi — biết kho từ mới có 126/800 từ
+ * còn hơn tưởng mình đã học hết N5 rồi vào phòng thi mới vỡ lẽ.
+ */
+const LEVEL_TARGETS: Record<string, { vocabulary: number; kanji: number; grammar: number }> = {
+  N5: { vocabulary: 800, kanji: 100, grammar: 80 },
+  N4: { vocabulary: 1500, kanji: 300, grammar: 150 },
+  N3: { vocabulary: 3750, kanji: 650, grammar: 200 },
+  N2: { vocabulary: 6000, kanji: 1000, grammar: 200 },
+  N1: { vocabulary: 10000, kanji: 2136, grammar: 250 },
+};
+
+router.get(
+  '/levels/:level',
+  asyncHandler(async (req: Request, res: Response) => {
+    const level = req.params.level.toUpperCase();
+    const targets = LEVEL_TARGETS[level];
+    if (!targets) {
+      throw AppError.notFound('RESOURCE_NOT_FOUND', `Không có cấp độ ${req.params.level}`);
+    }
+
+    const [vocabulary, kanji, grammar, templates] = await Promise.all([
+      Vocabulary.countDocuments({ jlptLevel: level, status: 'published' }),
+      Kanji.countDocuments({ jlptLevel: level, isPublished: true }),
+      GrammarPoint.countDocuments({ jlptLevel: level, status: 'published' }),
+      ExamTemplate.find({ levelCode: level, isActive: true })
+        .select('variant name descriptionVi totalDurationMinutes totalRequired totalMaxScore sections')
+        .lean(),
+    ]);
+
+    res.setHeader('Cache-Control', CACHE_1H);
+    return ok(res, {
+      level,
+      content: {
+        vocabulary: { available: vocabulary, expected: targets.vocabulary },
+        kanji: { available: kanji, expected: targets.kanji },
+        grammar: { available: grammar, expected: targets.grammar },
+      },
+      exams: templates.map((t) => ({
+        variant: t.variant,
+        name: t.name,
+        descriptionVi: t.descriptionVi,
+        durationMinutes: t.totalDurationMinutes,
+        totalRequired: t.totalRequired,
+        maxScore: t.totalMaxScore,
+        questionCount: t.sections.reduce(
+          (sum, s) => sum + s.mondai.reduce((a, m) => a + m.questionCount, 0),
+          0,
+        ),
+        sections: t.sections.map((s) => ({
+          code: s.code,
+          nameVi: s.nameVi,
+          durationMinutes: s.durationMinutes,
+          questionCount: s.mondai.reduce((a, m) => a + m.questionCount, 0),
+        })),
+      })),
+    });
   }),
 );
 
