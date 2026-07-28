@@ -38,4 +38,13 @@ export class AppError extends Error {
   static tooMany(code: string, message: string, details?: unknown) {
     return new AppError(code, message, 429, details);
   }
+  /**
+   * Lỗi do chính hệ thống sai, không phải do người dùng nhập sai.
+   *
+   * Dùng cho các bất biến nội bộ bị vi phạm: thà dừng lại và báo lỗi còn hơn
+   * để dữ liệu hỏng đi tiếp mà không ai biết.
+   */
+  static internal(code: string, message: string, details?: unknown) {
+    return new AppError(code, message, 500, details);
+  }
 }

@@ -154,12 +154,22 @@ export async function generateExam(userId: string, levelCode: string, variant = 
           Math.sqrt((item.stats?.timesServed ?? 0) + 1),
       );
 
-      picked.forEach((q, i) => {
+      picked.forEach((q) => {
         usedIds.add(String(q._id));
         questions.push({
           questionItemId: q._id,
           mondaiCode: mondai.code,
-          order: questions.length + i + 1,
+          /**
+           * Số thứ tự phải LIÊN TỤC 1..N trong mỗi phần thi.
+           *
+           * Trước đây tính bằng `questions.length + i + 1`, mà cả hai vế đều
+           * tăng sau mỗi vòng lặp — nên số câu nhảy hai đơn vị (1, 3, 5…) và
+           * các mondai sau đè số lên nhau. Hậu quả không chỉ là nhìn khó hiểu:
+           * saveAnswers tìm câu theo `order` bằng find(), nên hai câu trùng số
+           * thì đáp án của câu sau bị ghi đè vào câu trước — bài làm sai lệch
+           * mà không có dấu hiệu gì.
+           */
+          order: questions.length + 1,
           snapshot: {
             // Bản sao BẤT BIẾN: nội dung gốc có thể bị sửa sau này, nhưng bài
             // thi đã làm phải là bằng chứng nguyên vẹn.
@@ -183,6 +193,21 @@ export async function generateExam(userId: string, levelCode: string, variant = 
           changedAnswerCount: 0,
         });
       });
+    }
+
+    /**
+     * Chặn ngay tại nguồn: số thứ tự phải duy nhất trong một phần thi.
+     *
+     * Đây là bất biến mà saveAnswers ngầm dựa vào để tìm đúng câu. Nếu về sau
+     * ai đó sửa cách đánh số và làm hỏng nó, thà đề không sinh được còn hơn để
+     * thí sinh làm xong rồi mới phát hiện đáp án bị ghi nhầm chỗ.
+     */
+    const orders = questions.map((q) => q.order);
+    if (new Set(orders).size !== orders.length) {
+      throw AppError.internal(
+        'EXAM_DUPLICATE_ORDER',
+        `Lỗi nội bộ: phần "${sectionDef.nameVi}" có số thứ tự câu bị trùng`,
+      );
     }
 
     sections.push({

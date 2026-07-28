@@ -673,6 +673,48 @@ async function main() {
       firstSectionCode = r.data.sections[0].code;
     });
 
+    await test('Số thứ tự câu liên tục 1..N trong mỗi phần thi', async () => {
+      /**
+       * Từng tính bằng `questions.length + i + 1` — cả hai vế đều tăng sau mỗi
+       * vòng lặp nên số câu nhảy hai đơn vị (1, 3, 5…) và các mondai sau đè số
+       * lên nhau. Không chỉ khó nhìn: saveAnswers tìm câu theo `order`, nên hai
+       * câu trùng số thì đáp án bị ghi nhầm chỗ mà không có dấu hiệu gì.
+       */
+      const r = await student.client.get(`/exams/attempts/${attemptId}`);
+      for (const section of r.data.sections) {
+        const orders = section.questions.map((q: { order: number }) => q.order);
+        expect(orders).toEqual(orders.map((_: number, i: number) => i + 1));
+      }
+    });
+
+    await test('Mỗi đáp án được lưu vào đúng câu của nó', async () => {
+      const before = await student.client.get(`/exams/attempts/${attemptId}`);
+      const section = before.data.sections[0];
+      await student.client.post(
+        `/exams/attempts/${attemptId}/sections/${section.code}/start`,
+      );
+
+      // Mỗi câu chọn một phương án khác nhau theo vị trí: nếu đáp án bị ghi
+      // nhầm sang câu khác thì đối chiếu sẽ lệch ngay.
+      const plan = section.questions.map(
+        (q: { order: number; options: { id: string }[] }) => ({
+          order: q.order,
+          answer: q.options[q.order % q.options.length].id,
+        }),
+      );
+      await student.client.patch(`/exams/attempts/${attemptId}/answers`, {
+        sectionCode: section.code,
+        answers: plan,
+      });
+
+      const after = await student.client.get(`/exams/attempts/${attemptId}`);
+      const stored = after.data.sections[0].questions;
+      for (const p of plan) {
+        const q = stored.find((x: { order: number }) => x.order === p.order);
+        expect(q.userAnswer).toBe(p.answer);
+      }
+    });
+
     await test('Câu đọc hiểu mang theo NỘI DUNG đoạn văn', async () => {
       // Thiếu đoạn văn thì câu hỏi kiểu "Tanaka mấy giờ ra khỏi nhà?" hiện lên
       // mà không có gì để đọc — không ai trả lời được.
